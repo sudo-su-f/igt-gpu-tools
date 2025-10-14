@@ -1250,7 +1250,7 @@ static void debugger_destroy_triggers(struct xe_eudebug_debugger *d)
 void xe_eudebug_debugger_destroy(struct xe_eudebug_debugger *d)
 {
 	if (d->worker_state != DEBUGGER_WORKER_INACTIVE)
-		xe_eudebug_debugger_stop_worker(d, 1);
+		xe_eudebug_debugger_stop_worker(d);
 
 	if (d->target_pid)
 		xe_eudebug_debugger_detach(d);
@@ -1387,9 +1387,9 @@ void xe_eudebug_debugger_start_worker(struct xe_eudebug_debugger *d)
  *
  * Stops the debugger worker. Event log is sorted by seqno after closure.
  */
-void xe_eudebug_debugger_stop_worker(struct xe_eudebug_debugger *d,
-				     int timeout_s)
+void xe_eudebug_debugger_stop_worker(struct xe_eudebug_debugger *d)
 {
+	const int timeout_s = 3;
 	struct timespec t = {};
 	int ret;
 
@@ -1713,7 +1713,7 @@ void xe_eudebug_session_run(struct xe_eudebug_session *s)
 	xe_eudebug_client_start(client);
 	xe_eudebug_client_wait_done(client);
 
-	xe_eudebug_debugger_stop_worker(debugger, 1);
+	xe_eudebug_debugger_stop_worker(debugger);
 
 	xe_eudebug_event_log_print(debugger->log, true);
 	xe_eudebug_event_log_print(client->log, true);
