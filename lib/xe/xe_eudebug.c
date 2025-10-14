@@ -1510,8 +1510,11 @@ struct xe_eudebug_client *xe_eudebug_client_create(int master_fd, xe_eudebug_cli
 
 		c->pid = client_wait_token(c, CLIENT_RUN);
 		igt_assert_eq(c->pid, mypid);
-		if (work)
-			work(c);
+		igt_assert(work);
+
+		igt_debug("client: work start\n");
+		work(c);
+		igt_debug("client: work end\n");
 
 		client_signal(c, CLIENT_FINI, c->seqno);
 
