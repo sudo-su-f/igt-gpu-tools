@@ -260,7 +260,7 @@ static int safe_pipe_read(int pipe[2], void *buf, int nbytes, int timeout_ms)
 {
 	int ret;
 	int t = 0;
-	struct pollfd fd = {
+	struct pollfd r = {
 		.fd = pipe[0],
 		.events = POLLIN,
 		.revents = 0
@@ -272,9 +272,9 @@ static int safe_pipe_read(int pipe[2], void *buf, int nbytes, int timeout_ms)
 	do {
 		const int interval_ms = 1000;
 
-		ret = poll(&fd, 1, interval_ms);
-
+		ret = poll(&r, 1, interval_ms);
 		if (!ret) {
+			igt_debug("poll: timeout\n");
 			catch_child_failure();
 			t += interval_ms;
 		} else if (ret == -1) {
@@ -284,10 +284,20 @@ static int safe_pipe_read(int pipe[2], void *buf, int nbytes, int timeout_ms)
 			}
 			return -errno;
 		}
-	} while (!ret && t < timeout_ms);
 
-	if (ret > 0)
-		return read(pipe[0], buf, nbytes);
+		if (ret == 1) {
+			if (r.revents == POLLIN)
+				return read(pipe[0], buf, nbytes);
+
+			if (r.revents & ~POLLIN) {
+				igt_debug("pipe read failed: %s%s (0x%x)\n",
+					  r.revents & POLLHUP ? "pipe closed" : "",
+					  r.revents & POLLERR ? "poll error" : "",
+					  r.revents);
+				return -EIO;
+			}
+		}
+	} while (!ret && t < timeout_ms);
 
 	return -ETIMEDOUT;
 }
