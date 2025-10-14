@@ -1612,9 +1612,9 @@ void xe_eudebug_client_start(struct xe_eudebug_client *c)
 void xe_eudebug_client_wait_done(struct xe_eudebug_client *c)
 {
 	if (!c->done) {
-		c->done = 1;
 		c->seqno = wait_from_client(c, CLIENT_FINI);
 		event_log_read_from_fd(c->log, c->p_out[0]);
+		c->done = 1;
 	}
 }
 
