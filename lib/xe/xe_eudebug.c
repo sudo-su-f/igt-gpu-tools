@@ -1061,7 +1061,6 @@ static void debugger_run_triggers(struct xe_eudebug_debugger *d,
 	}
 }
 
-#define MAX_EVENT_SIZE (32 * 1024)
 static int
 xe_eudebug_read_event(int fd, struct drm_xe_eudebug_event *event)
 {
