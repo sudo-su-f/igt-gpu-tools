@@ -101,7 +101,11 @@ next_event(struct drm_xe_eudebug_event *e, struct xe_eudebug_event_log *l)
 
 	igt_assert(l);
 	igt_assert(l->log);
+	igt_assert(l->max_size);
 	igt_assert(l->head <= l->max_size);
+
+	if (!l->head)
+		return NULL;
 
 	if (!e)
 		return (struct drm_xe_eudebug_event *)l->log;

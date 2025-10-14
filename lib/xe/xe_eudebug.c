@@ -868,6 +868,9 @@ static void event_log_sort(struct xe_eudebug_event_log *l)
 		events++;
 	}
 
+	if (!events)
+		return;
+
 	tmp = xe_eudebug_event_log_create("tmp", l->max_size);
 
 	for (i = first_seqno; i <= last_seqno; i++) {
