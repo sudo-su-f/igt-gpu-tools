@@ -41,6 +41,7 @@ struct match_dto {
 	uint64_t *bind_op_seqno;
 };
 
+#define TOKEN_NONE  0
 #define CLIENT_PID  1
 #define CLIENT_RUN  2
 #define CLIENT_FINI 3
@@ -51,6 +52,7 @@ struct match_dto {
 static const char *token_to_str(uint64_t token)
 {
 	static const char * const s[] = {
+		"none",
 		"client pid",
 		"client run",
 		"client fini",
@@ -59,8 +61,12 @@ static const char *token_to_str(uint64_t token)
 		"debugger stage",
 	};
 
-	if (token >= ARRAY_SIZE(s))
+	igt_assert(token);
+
+	if (token >= ARRAY_SIZE(s)) {
+		igt_warn("token outside of bounds %ld\n", token);
 		return "unknown";
+	}
 
 	return s[token];
 }
@@ -334,8 +340,11 @@ static uint64_t __wait_token(int pipe[2], const uint64_t token, int timeout_ms)
 
 static uint64_t client_wait_token(struct xe_eudebug_client *c, const uint64_t token)
 {
-	uint64_t ret = __wait_token(c->p_in, token, c->timeout_ms);
+	uint64_t ret = 0;
 
+	igt_debug("client: %d waiting for token '%s'\n", getpid(), token_to_str(token));
+
+	ret = __wait_token(c->p_in, token, c->timeout_ms);
 	if (ret == DEAD_CLIENT)
 		igt_assert(c->allow_dead_client);
 
@@ -344,8 +353,11 @@ static uint64_t client_wait_token(struct xe_eudebug_client *c, const uint64_t to
 
 static uint64_t wait_from_client(struct xe_eudebug_client *c, const uint64_t token)
 {
-	uint64_t ret = __wait_token(c->p_out, token, c->timeout_ms);
+	uint64_t ret = 0;
 
+	igt_debug("debugger: %d waiting for token '%s'\n", getpid(), token_to_str(token));
+
+	ret = __wait_token(c->p_out, token, c->timeout_ms);
 	if (ret == DEAD_CLIENT)
 		igt_assert(c->allow_dead_client);
 
@@ -354,6 +366,9 @@ static uint64_t wait_from_client(struct xe_eudebug_client *c, const uint64_t tok
 
 static void token_signal(int pipe[2], const uint64_t token, const uint64_t value)
 {
+	igt_debug("%d signalling token '%s' with value '%ld'\n",
+		  getpid(), token_to_str(token), value);
+
 	pipe_signal(pipe, token);
 	pipe_signal(pipe, value);
 }
