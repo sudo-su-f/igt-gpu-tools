@@ -196,7 +196,8 @@ static void switch_modeset_ultra_joiner_big_joiner(data_t *data, igt_output_t *o
 
 	if (ultrajoiner_found) {
 		igt_output_override_mode(output, &uj_mode);
-	} else if (force_joiner_supported) {
+	} else if (force_joiner_supported &&
+		   igt_get_dsc_sink_max_slice_count(data->drm_fd, output->name) >= 8) {
 		status = kmstest_force_connector_joiner(data->drm_fd, output->config.connector,
 							JOINED_PIPES_ULTRA_JOINER);
 		igt_assert_f(status, "Failed to toggle force joiner\n");
