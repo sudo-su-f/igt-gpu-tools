@@ -1033,6 +1033,20 @@ print_percentage_bar(double percent, double max, int max_len, bool numeric)
 
 #define DEFAULT_PERIOD_MS (1000)
 
+static void show_help_screen(void)
+{
+	printf("Help for interactive commands:\n\n"
+"    '1'    Toggle between aggregated engine class and physical engine mode.\n"
+"    'n'    Toggle display of numeric client busyness overlay.\n"
+"    's'    Toggle between sort modes (runtime, total runtime, pid, client id).\n"
+"    'i'    Toggle display of clients which used no GPU time.\n"
+"    'H'    Toggle between per PID aggregation and individual clients.\n"
+"    'm'    Toggle between aggregated memory regions and full breakdown.\n"
+"\n"
+"    'h' or 'q'    Exit interactive help.\n"
+"\n");
+}
+
 static void
 usage(const char *appname)
 {
@@ -1053,6 +1067,8 @@ usage(const char *appname)
 		"\t[-m]            Default to showing all memory regions.\n"
 		"\n",
 		appname, DEFAULT_PERIOD_MS);
+	printf("To access interactive help, press 'h' while the application is running.\n");
+	show_help_screen();
 	igt_device_print_filter_types();
 }
 
@@ -2468,21 +2484,6 @@ static bool has_drm_fdinfo(const struct igt_device_card *card)
 	close(fd);
 
 	return cnt > 0;
-}
-
-static void show_help_screen(void)
-{
-	printf(
-"Help for interactive commands:\n\n"
-"    '1'    Toggle between aggregated engine class and physical engine mode.\n"
-"    'n'    Toggle display of numeric client busyness overlay.\n"
-"    's'    Toggle between sort modes (runtime, total runtime, pid, client id).\n"
-"    'i'    Toggle display of clients which used no GPU time.\n"
-"    'H'    Toggle between per PID aggregation and individual clients.\n"
-"    'm'    Toggle between aggregated memory regions and full breakdown.\n"
-"\n"
-"    'h' or 'q'    Exit interactive help.\n"
-"\n");
 }
 
 static int gettime(struct timespec *ts)
