@@ -2396,6 +2396,12 @@ static void process_help_stdin(void)
 	}
 }
 
+static void toggle_flag_and_set_msg(bool *flag, const char *msg_on, const char *msg_off)
+{
+	*flag ^= true;
+	header_msg = *flag ? msg_on : msg_off;
+}
+
 static void process_normal_stdin(void)
 {
 	for (;;) {
@@ -2411,18 +2417,14 @@ static void process_normal_stdin(void)
 			stop_top = true;
 			break;
 		case '1':
-			class_view ^= true;
-			if (class_view)
-				header_msg = "Aggregating engine classes.";
-			else
-				header_msg = "Showing physical engines.";
+			toggle_flag_and_set_msg(&class_view,
+						"Aggregating engine classes.",
+						"Showing physical engines.");
 			break;
 		case 'i':
-			filter_idle ^= true;
-			if (filter_idle)
-				header_msg = "Hiding inactive clients.";
-			else
-				header_msg = "Showing inactive clients.";
+			toggle_flag_and_set_msg(&filter_idle,
+						"Hiding inactive clients.",
+						"Showing inactive clients.");
 			break;
 		case 'n':
 			numeric_clients ^= true;
@@ -2434,18 +2436,14 @@ static void process_normal_stdin(void)
 			in_help = true;
 			break;
 		case 'H':
-			aggregate_pids ^= true;
-			if (aggregate_pids)
-				header_msg = "Aggregating clients.";
-			else
-				header_msg = "Showing individual clients.";
+			toggle_flag_and_set_msg(&aggregate_pids,
+						"Aggregating clients.",
+						"Showing individual clients.");
 			break;
 		case 'm':
-			aggregate_regions ^= true;
-			if (aggregate_regions)
-				header_msg = "Aggregating memory regions.";
-			else
-				header_msg = "Showing memory regions.";
+			toggle_flag_and_set_msg(&aggregate_regions,
+						"Aggregating memory regions.",
+						"Showing memory regions.");
 			break;
 		};
 	}
