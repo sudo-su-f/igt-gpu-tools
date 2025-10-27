@@ -29,13 +29,12 @@ uint64_t xe_mmio_read64(struct xe_mmio *mmio, uint32_t offset);
 void xe_mmio_write32(struct xe_mmio *mmio, uint32_t offset, uint32_t val);
 void xe_mmio_write64(struct xe_mmio *mmio, uint32_t offset, uint64_t val);
 
-uint32_t xe_mmio_gt_read32(struct xe_mmio *mmio, int gt, uint32_t offset);
-uint64_t xe_mmio_gt_read64(struct xe_mmio *mmio, int gt, uint32_t offset);
+uint32_t xe_mmio_tile_read32(struct xe_mmio *mmio, uint8_t tile, uint32_t offset);
+uint64_t xe_mmio_tile_read64(struct xe_mmio *mmio, uint8_t tile, uint32_t offset);
+void xe_mmio_tile_write32(struct xe_mmio *mmio, uint8_t tile, uint32_t offset, uint32_t val);
+void xe_mmio_tile_write64(struct xe_mmio *mmio, uint8_t tile, uint32_t offset, uint64_t val);
 
-void xe_mmio_gt_write32(struct xe_mmio *mmio, int gt, uint32_t offset, uint32_t val);
-void xe_mmio_gt_write64(struct xe_mmio *mmio, int gt, uint32_t offset, uint64_t val);
-
-xe_ggtt_pte_t xe_mmio_ggtt_read(struct xe_mmio *mmio, int gt, uint32_t pte_offset);
-void xe_mmio_ggtt_write(struct xe_mmio *mmio, int gt, uint32_t pte_offset, xe_ggtt_pte_t pte);
+xe_ggtt_pte_t xe_mmio_ggtt_read(struct xe_mmio *mmio, uint8_t tile, uint32_t pte_offset);
+void xe_mmio_ggtt_write(struct xe_mmio *mmio, uint8_t tile, uint32_t pte_offset, xe_ggtt_pte_t pte);
 
 #endif	/* XE_MMIO_H */
