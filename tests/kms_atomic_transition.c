@@ -961,7 +961,7 @@ retry:
 	iter_max = (j > 0) ? (j << 1) : 1;
 
 	if (igt_run_in_simulation() && iter_max > 1)
-		iter_max = iter_max >> 1;
+		iter_max = iter_max >> 2;
 
 	if (igt_display_try_commit_atomic(&data->display,
 				DRM_MODE_ATOMIC_TEST_ONLY |
