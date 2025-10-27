@@ -16,11 +16,13 @@ typedef uint64_t xe_ggtt_pte_t;
 
 struct xe_mmio {
 	int fd;
+	bool init;
 	struct intel_mmio_data intel_mmio;
 };
 
 void xe_mmio_vf_access_init(int pf_fd, int vf_id, struct xe_mmio *mmio);
 void xe_mmio_access_init(int pf_fd, struct xe_mmio *mmio);
+bool xe_mmio_is_initialized(const struct xe_mmio *mmio);
 void xe_mmio_access_fini(struct xe_mmio *mmio);
 
 uint32_t xe_mmio_read32(struct xe_mmio *mmio, uint32_t offset);

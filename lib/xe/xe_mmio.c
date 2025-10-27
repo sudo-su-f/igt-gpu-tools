@@ -25,6 +25,7 @@ void xe_mmio_vf_access_init(int pf_fd, int vf_id, struct xe_mmio *mmio)
 
 	intel_register_access_init(&mmio->intel_mmio, pci_dev, false);
 	mmio->fd = pf_fd;
+	mmio->init = true;
 }
 
 /**
@@ -40,6 +41,18 @@ void xe_mmio_access_init(int pf_fd, struct xe_mmio *mmio)
 }
 
 /**
+ * xe_mmio_is_initialized:
+ * @mmio: xe mmio structure for IO operations
+ *
+ * Returns:
+ * Non-zero if the xe mmio structure is initialized.
+ */
+bool xe_mmio_is_initialized(const struct xe_mmio *mmio)
+{
+	return mmio->init;
+}
+
+/**
  * xe_mmio_access_fini:
  * @mmio: xe mmio structure for IO operations
  *
@@ -49,6 +62,7 @@ void xe_mmio_access_init(int pf_fd, struct xe_mmio *mmio)
 void xe_mmio_access_fini(struct xe_mmio *mmio)
 {
 	intel_register_access_fini(&mmio->intel_mmio);
+	mmio->init = false;
 }
 
 /**
