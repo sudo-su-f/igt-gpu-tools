@@ -513,7 +513,7 @@ flip_and_measure(data_t *data, igt_output_t *output, enum pipe pipe,
 
 		calculate_tolerance(&threshold_hi[i], &threshold_lo[i], exp_rate_ns);
 
-		if (data->flag != TEST_LINK_OFF)
+		if (!(data->flag & TEST_LINK_OFF))
 			igt_info("Requested rate[%d]: %" PRIu64 " ns (%.2f Hz), Expected rate between: %" PRIu64 " ns (%.2f Hz) to %" PRIu64 " ns (%.2f Hz)\n",
 				 i, rates_ns[i], (float)NSECS_PER_SEC / rates_ns[i],
 				 threshold_hi[i], (float)NSECS_PER_SEC / threshold_hi[i],
@@ -583,7 +583,7 @@ flip_and_measure(data_t *data, igt_output_t *output, enum pipe pipe,
 		while (get_time_ns() < target_ns - 10);
 	}
 
-	if (data->flag != TEST_LINK_OFF) {
+	if (!(data->flag & TEST_LINK_OFF)) {
 		igt_info("Completed %u flips, %u were in threshold for [", total_flip, total_pass);
 
 		for (int i = 0; i < num_rates; ++i) {
