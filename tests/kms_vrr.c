@@ -350,7 +350,7 @@ static void prepare_test(data_t *data, igt_output_t *output, enum pipe pipe)
 	data->vtest_ns.max = igt_kms_frame_time_from_vrefresh(data->range.max);
 
 	/* If unspecified on the command line, default rate to the midpoint */
-	if (data->vtest_ns.rate_ns == 0) {
+	if (!(data->flag & TEST_FORCE_RR)) {
 		range_t *range = &data->range;
 		data->vtest_ns.rate_ns = igt_kms_frame_time_from_vrefresh(
 						(range->min + range->max) / 2);
