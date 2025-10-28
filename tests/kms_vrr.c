@@ -106,6 +106,7 @@ enum {
 	TEST_CMRR = 1 << 9,
 	TEST_LINK_OFF = 1 << 10,
 	TEST_NEGATIVE = 1 << 11,
+	TEST_FORCE_RR = 1 << 12,
 };
 
 enum {
@@ -1109,6 +1110,7 @@ static int opt_handler(int opt, int opt_index, void *_data)
 		break;
 	case 'r':
 		data->vtest_ns.rate_ns = igt_kms_frame_time_from_vrefresh(atoi(optarg));
+		data->flag |= TEST_FORCE_RR;
 		break;
 	case 's':
 		data->static_image = true;
