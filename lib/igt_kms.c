@@ -2737,15 +2737,15 @@ static void igt_fill_display_format_mod(igt_display_t *display);
  * @display: pointer to igt_display_t
  * @pipe: pipe which need to check
  *
- * Skip a (sub-)test if the pipe not enabled.
+ * Skip a (sub-)test if the pipe not valid.
  *
  * Should be used everywhere where a test checks pipe and skip
- * test when pipe is not enabled.
+ * test when pipe is not valid.
  */
 void igt_require_pipe(igt_display_t *display, enum pipe pipe)
 {
-	igt_skip_on_f(pipe >= display->n_pipes || !display->pipes[pipe].enabled,
-			"Pipe %s does not exist or not enabled\n",
+	igt_skip_on_f(pipe >= display->n_pipes || !display->pipes[pipe].valid,
+			"Pipe %s does not exist\n",
 			kmstest_pipe_name(pipe));
 }
 
@@ -2993,8 +2993,7 @@ void igt_display_require(igt_display_t *display, int drm_fd)
 		pipe = &display->pipes[pipe_enum];
 		pipe->pipe = pipe_enum;
 
-		/* pipe is enabled/disabled */
-		pipe->enabled = true;
+		pipe->valid = true;
 		pipe->crtc_id = resources->crtcs[i];
 		/* offset of a pipe in crtcs list */
 		pipe->crtc_offset = i;
@@ -3530,7 +3529,7 @@ igt_output_t **__igt_pipe_populate_outputs(igt_display_t *display, igt_output_t 
 
 	for (i = 0; i < display->n_pipes; i++) {
 		igt_pipe_t *pipe = &display->pipes[i];
-		if (pipe->enabled)
+		if (pipe->valid)
 			full_pipe_mask |= (1 << i);
 	}
 
@@ -6864,7 +6863,7 @@ bool igt_check_bigjoiner_support(igt_display_t *display)
 				}
 			}
 
-			if (!display->pipes[pipes[i].idx + 1].enabled) {
+			if (!display->pipes[pipes[i].idx + 1].valid) {
 				igt_info("Consecutive pipe-%s: Fused-off, couldn't be used as a Bigjoiner Secondary.\n",
 					 kmstest_pipe_name(display->pipes[pipes[i].idx + 1].pipe));
 				return false;
@@ -6886,7 +6885,7 @@ bool igt_check_bigjoiner_support(igt_display_t *display)
 				 max_dotclock, pipes[i - 1].force_joiner ? "Yes" : "No");
 			kmstest_dump_mode(pipes[i - 1].mode);
 
-			if (!display->pipes[pipes[i - 1].idx + 1].enabled) {
+			if (!display->pipes[pipes[i - 1].idx + 1].valid) {
 				igt_info("Consecutive pipe-%s: Fused-off, couldn't be used as a Bigjoiner Secondary.\n",
 					 kmstest_pipe_name(display->pipes[pipes[i - 1].idx + 1].pipe));
 				return false;
