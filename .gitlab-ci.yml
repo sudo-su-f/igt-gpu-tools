@@ -246,7 +246,6 @@ pages:
   script:
     - ninja -C build -j${FDO_CI_CONCURRENT:-4} igt-gpu-tools-doc
     - pip install -r docs/requirements-docs.txt
-    - mkdir -p docs/api_reference
     - cp -r build/docs/reference/igt-gpu-tools/html/ docs/api_reference
     - mkdocs build
     - cp -r site public
