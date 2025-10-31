@@ -55,6 +55,44 @@ IGT_TEST_DESCRIPTION("Xe tests for SR-IOV VF FLR (Functional Level Reset)");
 
 const char *SKIP_REASON = "SKIP";
 
+static struct g_mmio {
+	struct xe_mmio *mmio;
+	unsigned int num_vfs;
+} g_mmio;
+
+static inline struct xe_mmio *xe_mmio_for_vf(unsigned int vf)
+{
+	igt_assert_f(g_mmio.mmio, "MMIO not initialized\n");
+	igt_assert_f(vf <= g_mmio.num_vfs, "VF%u out of range (<= %u)\n", vf,
+		     g_mmio.num_vfs);
+	return &g_mmio.mmio[vf];
+}
+
+static void init_mmio(int pf_fd, unsigned int num_vfs)
+{
+	igt_assert_f(!g_mmio.mmio, "MMIO already initialized\n");
+	g_mmio.mmio = calloc(num_vfs + 1, sizeof(*g_mmio.mmio));
+	igt_assert(g_mmio.mmio);
+
+	for (unsigned int i = 0; i <= num_vfs; ++i)
+		xe_mmio_vf_access_init(pf_fd, i, &g_mmio.mmio[i]);
+
+	g_mmio.num_vfs = num_vfs;
+}
+
+static void cleanup_mmio(void)
+{
+	if (!g_mmio.mmio)
+		return;
+
+	for (size_t i = 0; i <= g_mmio.num_vfs; ++i)
+		if (xe_mmio_is_initialized(&g_mmio.mmio[i]))
+			xe_mmio_access_fini(&g_mmio.mmio[i]);
+	free(g_mmio.mmio);
+	g_mmio.mmio = NULL;
+	g_mmio.num_vfs = 0;
+}
+
 /**
  * struct subcheck_data - Base structure for subcheck data.
  *
@@ -285,6 +323,8 @@ static void verify_flr(int pf_fd, int num_vfs, struct subcheck *checks,
 	if (igt_warn_on(igt_pci_system_reinit()))
 		goto disable_vfs;
 
+	init_mmio(pf_fd, num_vfs);
+
 	for (i = 0; i < num_checks; ++i)
 		checks[i].init(checks[i].data);
 
@@ -302,6 +342,8 @@ static void verify_flr(int pf_fd, int num_vfs, struct subcheck *checks,
 cleanup:
 	for (i = 0; i < num_checks; ++i)
 		checks[i].cleanup(checks[i].data);
+
+	cleanup_mmio();
 
 disable_vfs:
 	igt_sriov_disable_vfs(pf_fd);
@@ -489,7 +531,6 @@ struct ggtt_provisioned_offset_range {
 struct ggtt_data {
 	struct subcheck_data base;
 	struct ggtt_provisioned_offset_range *pte_offsets;
-	struct xe_mmio *mmio;
 	struct ggtt_ops ggtt;
 };
 
@@ -544,11 +585,12 @@ static int populate_ggtt_pte_offsets(struct ggtt_data *gdata)
 	struct xe_sriov_provisioned_range *ranges;
 	uint8_t tile = gdata->base.tile;
 	unsigned int nr_ranges;
+	struct xe_mmio *mmio = xe_mmio_for_vf(0);
 
 	gdata->pte_offsets = calloc(num_vfs + 1, sizeof(*gdata->pte_offsets));
 	igt_assert(gdata->pte_offsets);
 
-	ret = xe_sriov_find_ggtt_provisioned_pte_offsets(pf_fd, tile, gdata->mmio,
+	ret = xe_sriov_find_ggtt_provisioned_pte_offsets(pf_fd, tile, mmio,
 							 &ranges, &nr_ranges);
 	if (ret) {
 		set_skip_reason(&gdata->base, "Failed to scan GGTT PTE offset ranges (%d)\n",
@@ -603,19 +645,15 @@ static void ggtt_subcheck_init(struct subcheck_data *data)
 	else
 		gdata->ggtt.set_pte = intel_set_pte;
 
-	if (gdata->mmio) {
-		if (!xe_mmio_is_initialized(&gdata->mmio[0]))
-			xe_mmio_vf_access_init(data->pf_fd, 0 /*PF*/, gdata->mmio);
-
-		populate_ggtt_pte_offsets(gdata);
-	} else {
-		set_skip_reason(data, "xe_mmio is NULL\n");
-	}
+	if (populate_ggtt_pte_offsets(gdata))
+		/* skip reason set in populate_ggtt_pte_offsets */
+		return;
 }
 
 static void ggtt_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 {
 	struct ggtt_data *gdata = (struct ggtt_data *)data;
+	struct xe_mmio *mmio = xe_mmio_for_vf(0);
 	xe_ggtt_pte_t pte;
 	uint32_t pte_offset;
 
@@ -628,7 +666,7 @@ static void ggtt_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 		  gdata->pte_offsets[vf_id].end);
 
 	for_each_pte_offset(pte_offset, &gdata->pte_offsets[vf_id]) {
-		if (!set_pte_gpa(&gdata->ggtt, gdata->mmio, data->tile, pte_offset,
+		if (!set_pte_gpa(&gdata->ggtt, mmio, data->tile, pte_offset,
 				 (uint8_t)vf_id, &pte)) {
 			set_skip_reason(data,
 					"Prepare VF%u failed, unexpected gpa: Read PTE: %#" PRIx64 " at offset: %#x\n",
@@ -642,6 +680,7 @@ static void ggtt_subcheck_verify_vf(int vf_id, int flr_vf_id, struct subcheck_da
 {
 	struct ggtt_data *gdata = (struct ggtt_data *)data;
 	uint8_t expected = (vf_id == flr_vf_id) ? 0 : vf_id;
+	struct xe_mmio *mmio = xe_mmio_for_vf(0);
 	xe_ggtt_pte_t pte;
 	uint32_t pte_offset;
 
@@ -649,7 +688,7 @@ static void ggtt_subcheck_verify_vf(int vf_id, int flr_vf_id, struct subcheck_da
 		return;
 
 	for_each_pte_offset(pte_offset, &gdata->pte_offsets[vf_id]) {
-		if (!check_pte_gpa(&gdata->ggtt, gdata->mmio, data->tile, pte_offset,
+		if (!check_pte_gpa(&gdata->ggtt, mmio, data->tile, pte_offset,
 				   expected, &pte)) {
 			set_fail_reason(data,
 					"GGTT check after VF%u FLR failed on VF%u: Read PTE: %#" PRIx64 " at offset: %#x\n",
@@ -828,7 +867,6 @@ static void lmem_subcheck_cleanup(struct subcheck_data *data)
 
 struct regs_data {
 	struct subcheck_data base;
-	struct xe_mmio *mmio;
 	uint32_t reg_addr;
 	int reg_count;
 };
@@ -846,6 +884,7 @@ static void regs_subcheck_init(struct subcheck_data *data)
 static void regs_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 {
 	struct regs_data *rdata = (struct regs_data *)data;
+	struct xe_mmio *mmio = xe_mmio_for_vf(vf_id);
 	uint8_t tile = data->tile;
 	uint32_t reg;
 	int i;
@@ -853,14 +892,11 @@ static void regs_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 	if (data->stop_reason)
 		return;
 
-	if (!xe_mmio_is_initialized(&rdata->mmio[vf_id]))
-		xe_mmio_vf_access_init(data->pf_fd, vf_id, &rdata->mmio[vf_id]);
-
 	for (i = 0; i < rdata->reg_count; i++) {
 		reg = rdata->reg_addr + i * 4;
 
-		xe_mmio_tile_write32(&rdata->mmio[vf_id], tile, reg, vf_id);
-		if (xe_mmio_tile_read32(&rdata->mmio[vf_id], tile, reg) != vf_id) {
+		xe_mmio_tile_write32(mmio, tile, reg, vf_id);
+		if (xe_mmio_tile_read32(mmio, tile, reg) != vf_id) {
 			set_skip_reason(data, "Registers write/read check failed on VF%u\n", vf_id);
 			return;
 		}
@@ -871,6 +907,7 @@ static void regs_subcheck_verify_vf(int vf_id, int flr_vf_id, struct subcheck_da
 {
 	struct regs_data *rdata = (struct regs_data *)data;
 	uint32_t expected = (vf_id == flr_vf_id) ? 0 : vf_id;
+	struct xe_mmio *mmio = xe_mmio_for_vf(vf_id);
 	uint32_t reg;
 	int i;
 
@@ -880,7 +917,7 @@ static void regs_subcheck_verify_vf(int vf_id, int flr_vf_id, struct subcheck_da
 	for (i = 0; i < rdata->reg_count; i++) {
 		reg = rdata->reg_addr + i * 4;
 
-		if (xe_mmio_tile_read32(&rdata->mmio[vf_id], data->tile, reg) != expected) {
+		if (xe_mmio_tile_read32(mmio, data->tile, reg) != expected) {
 			set_fail_reason(data,
 					"Registers check after VF%u FLR failed on VF%u\n",
 					flr_vf_id, vf_id);
@@ -889,18 +926,12 @@ static void regs_subcheck_verify_vf(int vf_id, int flr_vf_id, struct subcheck_da
 	}
 }
 
-static void regs_subcheck_cleanup(struct subcheck_data *data) { }
-
-static void cleanup_mmio(struct xe_mmio *mmio, int num_vfs)
+static void regs_subcheck_cleanup(struct subcheck_data *data)
 {
-	for (int i = 0; i <= num_vfs; ++i)
-		if (xe_mmio_is_initialized(&mmio[i]))
-			xe_mmio_access_fini(&mmio[i]);
 }
 
 static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 {
-	struct xe_mmio mmio[num_vfs + 1];
 	const uint8_t num_tiles = xe_tiles_count(pf_fd);
 	struct subcheck_data base;
 	struct ggtt_data gdata[num_tiles];
@@ -912,8 +943,6 @@ static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 	struct subcheck checks[num_checks];
 	unsigned int i = 0, t;
 
-	memset(mmio, 0, sizeof(mmio));
-
 	xe_for_each_tile(pf_fd, t) {
 		igt_assert_lt(i, num_tiles);
 		base = (struct subcheck_data){ .pf_fd = pf_fd,
@@ -922,7 +951,6 @@ static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 
 		gdata[i] = (struct ggtt_data){
 			.base = base,
-			.mmio = mmio,
 		};
 		checks[i * subcheck_count + 0] = (struct subcheck){
 			.data = (struct subcheck_data *)&gdata[i],
@@ -947,7 +975,6 @@ static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 
 		scratch_data[i] = (struct regs_data){
 			.base = base,
-			.mmio = mmio,
 			.reg_addr = SCRATCH_REG,
 			.reg_count = SCRATCH_REG_COUNT,
 		};
@@ -962,7 +989,6 @@ static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 
 		media_scratch_data[i] = (struct regs_data){
 			.base = base,
-			.mmio = mmio,
 			.reg_addr = MED_SCRATCH_REG,
 			.reg_count = MED_SCRATCH_REG_COUNT,
 		};
@@ -980,8 +1006,6 @@ static void clear_tests(int pf_fd, int num_vfs, flr_exec_strategy exec_strategy)
 	igt_assert_eq(i * subcheck_count, num_checks);
 
 	verify_flr(pf_fd, num_vfs, checks, num_checks, exec_strategy);
-
-	cleanup_mmio(mmio, num_vfs);
 }
 
 igt_main
