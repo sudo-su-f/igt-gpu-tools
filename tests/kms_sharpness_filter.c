@@ -48,6 +48,26 @@
  *
  * SUBTEST: filter-scaler-downscale
  * Description: verify content adaptive sharpness filter with 1 plane scaler enabled during downscaling.
+ *
+ * SUBTEST: invalid-filter-with-scaler
+ * Description: Negative check for content adaptive sharpness filter
+ * 		when 2 plane scalers have already been enabled and
+ * 		attempt is made to enable sharpness filter.
+ *
+ * SUBTEST: invalid-filter-with-plane
+ * Description: Negative check for content adaptive sharpness filter
+ * 		when 2 NV12 planes have already been enabled and attempt is
+ * 		made to enable the sharpness filter.
+ *
+ * SUBTEST: invalid-plane-with-filter
+ * Description: Negative check for content adaptive sharpness filter
+ * 		when 1 NV12 plane and sharpness filter have already been enabled
+ * 		and attempt is made to enable the second NV12 plane.
+ *
+ * SUBTEST: invalid-filter-with-scaling-mode
+ * Description: Negative check for content adaptive sharpness filter
+ *              when scaling mode is already enabled and attempt is made to enable
+ *              sharpness filter.
 */
 
 IGT_TEST_DESCRIPTION("Test to validate content adaptive sharpness filter");
@@ -68,9 +88,15 @@ IGT_TEST_DESCRIPTION("Test to validate content adaptive sharpness filter");
 #define MAX_PIXELS_FOR_3_TAP_FILTER	(1920 * 1080)
 #define MAX_PIXELS_FOR_5_TAP_FILTER	(3840 * 2160)
 #define NROUNDS				10
-
+#define INVALID_TEST ((type == TEST_INVALID_FILTER_WITH_SCALER) \
+		   || (type == TEST_INVALID_FILTER_WITH_PLANE) \
+		   || (type == TEST_INVALID_PLANE_WITH_FILTER) \
+		   || (type == TEST_INVALID_FILTER_WITH_SCALING_MODE))
 #define SET_PLANES ((type == TEST_FILTER_UPSCALE) \
-		||  (type == TEST_FILTER_DOWNSCALE))
+		||  (type == TEST_FILTER_DOWNSCALE) \
+		||  (type == TEST_INVALID_FILTER_WITH_SCALER) \
+		||  (type == TEST_INVALID_FILTER_WITH_PLANE) \
+		||  (type == TEST_INVALID_FILTER_WITH_SCALING_MODE))
 
 enum test_type {
 	TEST_FILTER_BASIC,
@@ -84,6 +110,10 @@ enum test_type {
 	TEST_FILTER_SUSPEND,
 	TEST_FILTER_UPSCALE,
 	TEST_FILTER_DOWNSCALE,
+	TEST_INVALID_FILTER_WITH_SCALER,
+	TEST_INVALID_FILTER_WITH_PLANE,
+	TEST_INVALID_PLANE_WITH_FILTER,
+	TEST_INVALID_FILTER_WITH_SCALING_MODE,
 };
 
 const int filter_strength_list[] = {
@@ -116,6 +146,11 @@ static const igt_rotation_t rotations[] = {
 	IGT_ROTATION_0,
 	IGT_ROTATION_180,
 };
+static const uint32_t scaling_modes[] = {
+	DRM_MODE_SCALE_FULLSCREEN,
+	DRM_MODE_SCALE_CENTER,
+	DRM_MODE_SCALE_ASPECT,
+};
 
 typedef struct {
 	int drm_fd;
@@ -133,6 +168,7 @@ typedef struct {
 	const char *modifier_name;
 	uint32_t format;
 	igt_rotation_t rotation;
+	uint32_t scaling_mode;
 } data_t;
 
 static void set_filter_strength_on_pipe(data_t *data)
@@ -140,6 +176,12 @@ static void set_filter_strength_on_pipe(data_t *data)
 	igt_pipe_set_prop_value(&data->display, data->pipe_id,
 				IGT_CRTC_SHARPNESS_STRENGTH,
 				data->filter_strength);
+}
+
+static bool has_scaling_mode(igt_output_t *output)
+{
+	return igt_output_has_prop(output, IGT_CONNECTOR_SCALING_MODE) &&
+	       igt_output_get_prop(output, IGT_CONNECTOR_SCALING_MODE);
 }
 
 static void paint_image(igt_fb_t *fb)
@@ -176,10 +218,12 @@ static void cleanup_fbs(data_t *data)
 
 static void set_planes(data_t *data, enum test_type type)
 {
+	int ret;
 	drmModeModeInfo *mode = data->mode;
 	igt_output_t *output = data->output;
 
 	data->plane[1] = igt_output_get_plane(output, 1);
+	data->plane[2] = igt_output_get_plane(output, 2);
 
 	if (type == TEST_FILTER_UPSCALE) {
 		setup_fb(data->drm_fd, 20, 20, data->format, data->modifier, &data->fb[1]);
@@ -191,6 +235,46 @@ static void set_planes(data_t *data, enum test_type type)
 		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[1]);
 		igt_plane_set_fb(data->plane[1], &data->fb[1]);
 		igt_plane_set_size(data->plane[1], mode->hdisplay * 0.75, mode->vdisplay * 0.75);
+	}
+
+	if (type == TEST_INVALID_FILTER_WITH_SCALER) {
+		setup_fb(data->drm_fd, 20, 20, data->format, data->modifier, &data->fb[1]);
+		setup_fb(data->drm_fd, 20, 20, data->format, data->modifier, &data->fb[2]);
+		igt_plane_set_fb(data->plane[1], &data->fb[1]);
+		igt_plane_set_fb(data->plane[2], &data->fb[2]);
+		igt_plane_set_size(data->plane[1], mode->hdisplay, mode->vdisplay);
+		igt_plane_set_size(data->plane[2], mode->hdisplay, mode->vdisplay);
+	}
+
+	if (type == TEST_INVALID_FILTER_WITH_PLANE) {
+		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[1]);
+		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[2]);
+		igt_plane_set_fb(data->plane[1], &data->fb[1]);
+		igt_plane_set_fb(data->plane[2], &data->fb[2]);
+	}
+
+	if (type == TEST_INVALID_PLANE_WITH_FILTER) {
+		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[1]);
+		igt_plane_set_fb(data->plane[1], &data->fb[1]);
+	}
+
+	if (type == TEST_INVALID_FILTER_WITH_SCALING_MODE) {
+		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[1]);
+		setup_fb(data->drm_fd, 640, 480, data->format, data->modifier, &data->fb[2]);
+		igt_plane_set_fb(data->plane[1], &data->fb[1]);
+		igt_plane_set_fb(data->plane[2], &data->fb[2]);
+
+		ret = igt_display_try_commit_atomic(&data->display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
+		igt_assert_eq(ret, 0);
+
+		mode->hdisplay = 640;
+		mode->vdisplay = 480;
+
+		igt_output_override_mode(data->output, mode);
+		igt_plane_set_fb(data->plane[2], NULL);
+		igt_plane_set_fb(data->plane[1], &data->fb[2]);
+
+		igt_output_set_prop_value(data->output, IGT_CONNECTOR_SCALING_MODE, data->scaling_mode);
 	}
 }
 
@@ -268,15 +352,21 @@ static void test_sharpness_filter(data_t *data,  enum test_type type)
 			igt_skip("No requested rotation on pipe %s\n", kmstest_pipe_name(data->pipe_id));
 	}
 
+	if (type == TEST_INVALID_FILTER_WITH_SCALING_MODE)
+		igt_require_f(has_scaling_mode(output), "No connecter scaling mode found on %s\n", output->name);
+
 	if (SET_PLANES)
 		set_planes(data, type);
 
 	set_filter_strength_on_pipe(data);
 
-	if (data->filter_strength != 0)
+	if (!INVALID_TEST && data->filter_strength != 0)
 		igt_debug("Sharpened image should be observed for filter strength > 0\n");
 
-	ret = igt_display_try_commit2(&data->display, COMMIT_ATOMIC);
+	if (type == TEST_INVALID_FILTER_WITH_SCALING_MODE)
+		ret = igt_display_try_commit_atomic(&data->display, 0, NULL);
+	else
+		ret = igt_display_try_commit2(&data->display, COMMIT_ATOMIC);
 
 	if (type == TEST_FILTER_DPMS || type == TEST_FILTER_SUSPEND) {
 		pipe_crc = igt_pipe_crc_new(data->drm_fd, data->pipe_id,
@@ -309,7 +399,18 @@ static void test_sharpness_filter(data_t *data,  enum test_type type)
 		igt_skip_on_f(ret == -ERANGE || ret == -EINVAL,
 			      "Scaling op not supported, cdclk limits might be exceeded.\n");
 
-	igt_assert_eq(ret, 0);
+	if (type == TEST_INVALID_PLANE_WITH_FILTER) {
+		data->plane[3] = igt_output_get_plane(data->output, 3);
+		setup_fb(data->drm_fd, mode->hdisplay, mode->vdisplay, data->format, data->modifier, &data->fb[3]);
+		igt_plane_set_fb(data->plane[3], &data->fb[3]);
+
+		ret = igt_display_try_commit2(&data->display, COMMIT_ATOMIC);
+	}
+
+	if (INVALID_TEST)
+		igt_assert_eq(ret, -EINVAL);
+	else
+		igt_assert_eq(ret, 0);
 
 	/* clean-up */
 	igt_pipe_crc_free(pipe_crc);
@@ -409,6 +510,18 @@ run_sharpness_filter_test(data_t *data, enum test_type type)
 				break;
 			case TEST_FILTER_DOWNSCALE:
 				snprintf(name, sizeof(name), "-downscale");
+				break;
+			case TEST_INVALID_FILTER_WITH_SCALER:
+				snprintf(name, sizeof(name), "-invalid-filter-with-scaler");
+				break;
+			case TEST_INVALID_FILTER_WITH_PLANE:
+				snprintf(name, sizeof(name), "-invalid-filter-with-plane");
+				break;
+			case TEST_INVALID_PLANE_WITH_FILTER:
+				snprintf(name, sizeof(name), "-invalid-plane-with-filter");
+				break;
+			case TEST_INVALID_FILTER_WITH_SCALING_MODE:
+				snprintf(name, sizeof(name), "-invalid-filter-with-scaling-mode-%s", kmstest_scaling_mode_str(data->scaling_mode));
 				break;
 			default:
 				igt_assert(0);
@@ -586,6 +699,58 @@ igt_main_args("l", NULL, help_str, opt_handler, &data)
 		data.filter_strength = MID_FILTER_STRENGTH;
 
 		run_sharpness_filter_test(&data, TEST_FILTER_DOWNSCALE);
+	}
+
+	igt_describe("Negative check for content adaptive sharpness filter "
+		     "when 2 plane scalers have already been enabled and "
+		     "attempt is made to enable sharpness filter.");
+	igt_subtest_with_dynamic("invalid-filter-with-scaler") {
+		data.modifier = DRM_FORMAT_MOD_LINEAR;
+		data.rotation = IGT_ROTATION_0;
+		data.format = DRM_FORMAT_XRGB8888;
+		data.filter_strength = MID_FILTER_STRENGTH;
+
+		run_sharpness_filter_test(&data, TEST_INVALID_FILTER_WITH_SCALER);
+	}
+
+	igt_describe("Negative check for content adaptive sharpness filter "
+		     "when 2 NV12 planes have already been enabled and attempt is "
+		     "made to enable the sharpness filter.");
+	igt_subtest_with_dynamic("invalid-filter-with-plane") {
+		data.modifier = DRM_FORMAT_MOD_LINEAR;
+		data.rotation = IGT_ROTATION_0;
+		data.format = DRM_FORMAT_NV12;
+		data.filter_strength = MID_FILTER_STRENGTH;
+
+		run_sharpness_filter_test(&data, TEST_INVALID_FILTER_WITH_PLANE);
+	}
+
+	igt_describe("Negative check for content adaptive sharpness filter "
+		     "when 1 NV12 plane and sharpness filter have already been enabled "
+		     "and attempt is made to enable the second NV12 plane.");
+	igt_subtest_with_dynamic("invalid-plane-with-filter") {
+		data.modifier = DRM_FORMAT_MOD_LINEAR;
+		data.rotation = IGT_ROTATION_0;
+		data.format = DRM_FORMAT_NV12;
+		data.filter_strength = MID_FILTER_STRENGTH;
+
+		run_sharpness_filter_test(&data, TEST_INVALID_PLANE_WITH_FILTER);
+	}
+
+	igt_describe("Negative check for content adaptive sharpness filter "
+		     "when scaling mode is already enabled and attempt is made "
+		     "to enable sharpness filter.");
+	igt_subtest_with_dynamic("invalid-filter-with-scaling-mode") {
+		data.modifier = DRM_FORMAT_MOD_LINEAR;
+		data.rotation = IGT_ROTATION_0;
+		data.format = DRM_FORMAT_XRGB8888;
+		data.filter_strength = MID_FILTER_STRENGTH;
+
+		for (int k = 0; k < ARRAY_SIZE(scaling_modes); k++) {
+			data.scaling_mode = scaling_modes[k];
+
+			run_sharpness_filter_test(&data, TEST_INVALID_FILTER_WITH_SCALING_MODE);
+		}
 	}
 
 	igt_fixture {
