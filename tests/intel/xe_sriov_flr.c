@@ -53,7 +53,9 @@
 
 IGT_TEST_DESCRIPTION("Xe tests for SR-IOV VF FLR (Functional Level Reset)");
 
-const char *SKIP_REASON = "SKIP";
+static const char STOP_REASON_ABORT[] = "ABORT";
+static const char STOP_REASON_FAIL[]  = "FAIL";
+static const char STOP_REASON_SKIP[]  = "SKIP";
 
 static struct g_mmio {
 	struct xe_mmio *mmio;
@@ -196,7 +198,7 @@ static void set_skip_reason(struct subcheck_data *data, const char *format, ...)
 	va_list args;
 
 	va_start(args, format);
-	set_stop_reason_v(data, SKIP_REASON, format, args);
+	set_stop_reason_v(data, STOP_REASON_SKIP, format, args);
 	va_end(args);
 }
 
@@ -206,7 +208,17 @@ static void set_fail_reason(struct subcheck_data *data, const char *format, ...)
 	va_list args;
 
 	va_start(args, format);
-	set_stop_reason_v(data, "FAIL", format, args);
+	set_stop_reason_v(data, STOP_REASON_FAIL, format, args);
+	va_end(args);
+}
+
+__attribute__((format(printf, 2, 3)))
+static void set_abort_reason(struct subcheck_data *data, const char *format, ...)
+{
+	va_list args;
+
+	va_start(args, format);
+	set_stop_reason_v(data, STOP_REASON_ABORT, format, args);
 	va_end(args);
 }
 
@@ -234,7 +246,7 @@ static bool no_subchecks_can_proceed(struct subcheck *checks, int num_checks)
 static bool is_subcheck_skipped(struct subcheck *subcheck)
 {
 	return subcheck->data && subcheck->data->stop_reason &&
-	       !strncmp(SKIP_REASON, subcheck->data->stop_reason, strlen(SKIP_REASON));
+	       !strncmp(STOP_REASON_SKIP, subcheck->data->stop_reason, strlen(STOP_REASON_SKIP));
 }
 
 static void subchecks_report_results(struct subcheck *checks, int num_checks)
@@ -593,8 +605,8 @@ static int populate_ggtt_pte_offsets(struct ggtt_data *gdata)
 	ret = xe_sriov_find_ggtt_provisioned_pte_offsets(pf_fd, tile, mmio,
 							 &ranges, &nr_ranges);
 	if (ret) {
-		set_skip_reason(&gdata->base, "Failed to scan GGTT PTE offset ranges (%d)\n",
-				ret);
+		set_abort_reason(&gdata->base, "Failed to scan GGTT PTE offset ranges (%d)\n",
+				 ret);
 		return -1;
 	}
 
@@ -605,15 +617,17 @@ static int populate_ggtt_pte_offsets(struct ggtt_data *gdata)
 			continue;
 
 		if (vf_id < 1 || vf_id > num_vfs) {
-			set_skip_reason(&gdata->base, "Unexpected VF%u at range entry %u [%#" PRIx64 "-%#" PRIx64 "], num_vfs=%u\n",
-					vf_id, i, ranges[i].start, ranges[i].end, num_vfs);
+			set_abort_reason(&gdata->base,
+					 "Unexpected VF%u at range entry %u [%#" PRIx64
+					 "-%#" PRIx64 "], num_vfs=%u\n",
+					 vf_id, i, ranges[i].start, ranges[i].end, num_vfs);
 			free(ranges);
 			return -1;
 		}
 
 		if (gdata->pte_offsets[vf_id].end) {
-			set_skip_reason(&gdata->base, "Duplicate GGTT PTE offset range for VF%u\n",
-					vf_id);
+			set_abort_reason(&gdata->base, "Duplicate GGTT PTE offset range for VF%u\n",
+					 vf_id);
 			free(ranges);
 			return -1;
 		}
@@ -626,9 +640,9 @@ static int populate_ggtt_pte_offsets(struct ggtt_data *gdata)
 
 	for (int vf_id = 1; vf_id <= num_vfs; ++vf_id)
 		if (!gdata->pte_offsets[vf_id].end) {
-			set_skip_reason(&gdata->base,
-					"Failed to find VF%u provisioned GGTT PTE offset range\n",
-					vf_id);
+			set_abort_reason(&gdata->base,
+					 "Failed to find VF%u provisioned GGTT PTE offset range\n",
+					 vf_id);
 			return -1;
 		}
 
@@ -668,9 +682,9 @@ static void ggtt_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 	for_each_pte_offset(pte_offset, &gdata->pte_offsets[vf_id]) {
 		if (!set_pte_gpa(&gdata->ggtt, mmio, data->tile, pte_offset,
 				 (uint8_t)vf_id, &pte)) {
-			set_skip_reason(data,
-					"Prepare VF%u failed, unexpected gpa: Read PTE: %#" PRIx64 " at offset: %#x\n",
-					vf_id, pte, pte_offset);
+			set_abort_reason(data,
+					 "Prepare VF%u failed, unexpected gpa: Read PTE: %#" PRIx64 " at offset: %#x\n",
+					 vf_id, pte, pte_offset);
 			return;
 		}
 	}
@@ -782,9 +796,9 @@ static int populate_vf_lmem_sizes(struct subcheck_data *data)
 							  XE_SRIOV_SHARED_RES_LMEM,
 							  main_gt, &ranges, &nr_ranges);
 	if (ret) {
-		set_skip_reason(data, "Failed read %s on main GT (%d)\n",
-				xe_sriov_debugfs_provisioned_attr_name(XE_SRIOV_SHARED_RES_LMEM),
-				ret);
+		set_abort_reason(data, "Failed read %s on main GT (%d)\n",
+				 xe_sriov_debugfs_provisioned_attr_name(XE_SRIOV_SHARED_RES_LMEM),
+				 ret);
 		return -1;
 	}
 
@@ -800,7 +814,7 @@ static int populate_vf_lmem_sizes(struct subcheck_data *data)
 
 	for (int vf_id = 1; vf_id <= data->num_vfs; ++vf_id)
 		if (!ldata->vf_lmem_size[vf_id]) {
-			set_skip_reason(data, "No LMEM provisioned for VF%u\n", vf_id);
+			set_abort_reason(data, "No LMEM provisioned for VF%u\n", vf_id);
 			return -1;
 		}
 
@@ -833,7 +847,7 @@ static void lmem_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 
 	if (!lmem_mmap_write_munmap(data->pf_fd, vf_id,
 				    ldata->vf_lmem_size[vf_id], vf_id)) {
-		set_skip_reason(data, "LMEM write failed on VF%u\n", vf_id);
+		set_abort_reason(data, "LMEM write failed on VF%u\n", vf_id);
 	}
 }
 
@@ -897,7 +911,8 @@ static void regs_subcheck_prepare_vf(int vf_id, struct subcheck_data *data)
 
 		xe_mmio_tile_write32(mmio, tile, reg, vf_id);
 		if (xe_mmio_tile_read32(mmio, tile, reg) != vf_id) {
-			set_skip_reason(data, "Registers write/read check failed on VF%u\n", vf_id);
+			set_abort_reason(data, "Registers write/read check failed on VF%u\n",
+					 vf_id);
 			return;
 		}
 	}
