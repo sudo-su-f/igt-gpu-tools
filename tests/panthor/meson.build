@@ -1,5 +1,8 @@
 panthor_progs = [
-	'panthor_query'
+	'panthor_gem',
+	'panthor_group',
+	'panthor_query',
+	'panthor_vm',
 ]
 
 foreach prog : panthor_progs
