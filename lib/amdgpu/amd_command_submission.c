@@ -153,8 +153,12 @@ static void amdgpu_create_ip_queues(amdgpu_device_handle device,
 	r = amdgpu_query_hw_ip_info(device, ip_block->type, 0, &hw_ip_info);
 	igt_assert_eq(r, 0);
 
-	available_rings = user_queue ? ((1 << hw_ip_info.num_userq_slots) - 1) :
-				hw_ip_info.available_rings;
+	if (user_queue)
+		available_rings = ring_context->hw_ip_info.num_userq_slots ?
+			((1 << ring_context->hw_ip_info.num_userq_slots) -1) : 1;
+	else
+		available_rings = ring_context->hw_ip_info.available_rings;
+
 	if (available_rings <= 0) {
 		*ring_context_out = NULL;
 		*available_rings_out = 0;
@@ -369,8 +373,13 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 
 	r = amdgpu_query_hw_ip_info(device, ip_block->type, 0, &ring_context->hw_ip_info);
 	igt_assert_eq(r, 0);
-	available_rings = user_queue ? ((1 << ring_context->hw_ip_info.num_userq_slots) -1) :
-					ring_context->hw_ip_info.available_rings;
+
+	if (user_queue)
+		available_rings = ring_context->hw_ip_info.num_userq_slots ?
+			((1 << ring_context->hw_ip_info.num_userq_slots) -1) : 1;
+	else
+		available_rings = ring_context->hw_ip_info.available_rings;
+
 	for (i = 0; secure && (i < 2); i++)
 		gtt_flags[i] |= AMDGPU_GEM_CREATE_ENCRYPTED;
 
@@ -496,8 +505,12 @@ void amdgpu_command_submission_const_fill_helper(amdgpu_device_handle device,
 	igt_assert(ring_context->pm4);
 	r = amdgpu_query_hw_ip_info(device, ip_block->type, 0, &ring_context->hw_ip_info);
 	igt_assert_eq(r, 0);
-	available_rings = user_queue ? ((1 << ring_context->hw_ip_info.num_userq_slots) -1) :
-					ring_context->hw_ip_info.available_rings;
+
+	if (user_queue)
+		available_rings = ring_context->hw_ip_info.num_userq_slots ?
+			((1 << ring_context->hw_ip_info.num_userq_slots) -1) : 1;
+	else
+		available_rings = ring_context->hw_ip_info.available_rings;
 
 	if (user_queue) {
 		ip_block->funcs->userq_create(device, ring_context, ip_block->type);
@@ -593,9 +606,12 @@ void amdgpu_command_submission_copy_linear_helper(amdgpu_device_handle device,
 	igt_assert(ring_context->pm4);
 	r = amdgpu_query_hw_ip_info(device, ip_block->type, 0, &ring_context->hw_ip_info);
 	igt_assert_eq(r, 0);
-	available_rings = user_queue ? ((1 << ring_context->hw_ip_info.num_userq_slots) -1) :
-					ring_context->hw_ip_info.available_rings;
 
+	if (user_queue)
+		available_rings = ring_context->hw_ip_info.num_userq_slots ?
+			((1 << ring_context->hw_ip_info.num_userq_slots) -1) : 1;
+	else
+		available_rings = ring_context->hw_ip_info.available_rings;
 
 	if (user_queue) {
 		ip_block->funcs->userq_create(device, ring_context, ip_block->type);
