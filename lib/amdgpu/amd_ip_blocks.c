@@ -582,7 +582,7 @@ int amdgpu_timeline_syncobj_wait(amdgpu_device_handle device_handle,
 	return r;
 }
 
-static void
+static int
 user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_context,
 			      unsigned int ip_type, uint64_t mc_address)
 {
@@ -653,8 +653,8 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 	igt_assert_eq(r, 0);
 
 	r = amdgpu_cs_syncobj_wait(device, &ring_context->timeline_syncobj_handle, 1, timeout,
-				   DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, NULL);
-	igt_assert_eq(r, 0);
+				DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, NULL);
+	return r;
 }
 
 static void
@@ -932,10 +932,11 @@ amdgpu_timeline_syncobj_wait(amdgpu_device_handle device_handle,
 	return 0;
 }
 
-static void
+static int
 user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_context,
 	unsigned int ip_type, uint64_t mc_address)
 {
+	return 0;
 }
 
 static void

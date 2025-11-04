@@ -69,9 +69,11 @@ int amdgpu_test_exec_cs_helper(amdgpu_device_handle device, unsigned int ip_type
 	ring_ptr = ib_result_cpu;
 	memcpy(ring_ptr, ring_context->pm4, ring_context->pm4_dw * sizeof(*ring_context->pm4));
 
-	if (user_queue)
-		ip_block->funcs->userq_submit(device, ring_context, ip_type, ib_result_mc_address);
-	else {
+	if (user_queue) {
+		r = ip_block->funcs->userq_submit(device, ring_context, ip_type, ib_result_mc_address);
+		if (!expect_failure)
+			igt_assert_eq(r, 0);
+	} else {
 		ring_context->ib_info.ib_mc_address = ib_result_mc_address;
 		ring_context->ib_info.size = ring_context->pm4_dw;
 		if (ring_context->secure)
