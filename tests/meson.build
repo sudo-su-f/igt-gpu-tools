@@ -491,6 +491,8 @@ subdir('msm')
 
 subdir('panfrost')
 
+subdir('panthor')
+
 subdir('v3d')
 
 subdir('vc4')
