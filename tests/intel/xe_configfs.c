@@ -177,6 +177,9 @@ static void test_ctx_restore_invalid(int configfs_device_fd, const char *type)
 		{ .test = "invalid-reg-addr-only",
 		  .in = "rcs reg 4F100",
 		},
+		{ .test = "invalid-engine-instance",
+		  .in = "rcs0 reg 4F100 DEADBEEF",
+		},
 	};
 	char buf[4096] = { };
 	char file[64] = { };
