@@ -200,13 +200,19 @@ static void sysfs_range(int dirfd, int gt)
 static void __restore_sysfs_freq(int dirfd, int sysfs_fd, int fd)
 {
 	char buf[256];
+	int len;
 
 	igt_pm_ignore_slpc_efficient_freq(fd, dirfd, false);
 
-	if (igt_sysfs_read(sysfs_fd, "gt_RPn_freq_mhz", buf, sizeof(buf)) > 0)
+	len = igt_sysfs_read(sysfs_fd, "gt_RPn_freq_mhz", buf, sizeof(buf) - 1);
+	if (len > 0) {
+		buf[len] = '\0';
 		igt_sysfs_rps_set(dirfd, RPS_MIN_FREQ_MHZ, buf);
+	}
 
-	if (igt_sysfs_rps_read(dirfd, RPS_RP0_FREQ_MHZ, buf, sizeof(buf)) > 0) {
+	len = igt_sysfs_rps_read(dirfd, RPS_RP0_FREQ_MHZ, buf, sizeof(buf) - 1);
+	if (len > 0) {
+		buf[len] = '\0';
 		igt_sysfs_rps_set(dirfd, RPS_MAX_FREQ_MHZ, buf);
 		igt_sysfs_rps_set(dirfd, RPS_BOOST_FREQ_MHZ, buf);
 	}
@@ -230,14 +236,20 @@ static void restore_sysfs_freq(int sig)
 static void __disable_boost(int dirfd)
 {
 	char buf[256];
+	int len;
 
-	if (igt_sysfs_rps_read(dirfd, RPS_RPn_FREQ_MHZ, buf, sizeof(buf)) > 0) {
+	len = igt_sysfs_rps_read(dirfd, RPS_RPn_FREQ_MHZ, buf, sizeof(buf) - 1);
+	if (len > 0) {
+		buf[len] = '\0';
 		igt_sysfs_rps_set(dirfd, RPS_MIN_FREQ_MHZ, buf);
 		igt_sysfs_rps_set(dirfd, RPS_BOOST_FREQ_MHZ, buf);
 	}
 
-	if (igt_sysfs_rps_read(dirfd, RPS_RP0_FREQ_MHZ, buf, sizeof(buf)) > 0)
+	len = igt_sysfs_rps_read(dirfd, RPS_RP0_FREQ_MHZ, buf, sizeof(buf) - 1);
+	if (len > 0) {
+		buf[len] = '\0';
 		igt_sysfs_rps_set(dirfd, RPS_MAX_FREQ_MHZ, buf);
+	}
 }
 
 static void disable_boost(void)
