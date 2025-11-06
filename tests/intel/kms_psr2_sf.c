@@ -251,7 +251,6 @@ static bool set_sel_fetch_mode_for_output(data_t *data)
 							PR_MODE_SEL_FETCH, data->output)) {
 		supported = true;
 		data->psr_mode = PR_MODE_SEL_FETCH;
-		data->et_flag = true;
 	} else if (psr_sink_support(data->drm_fd, data->debugfs_fd,
 							PSR_MODE_2_ET, data->output)) {
 		supported = true;
