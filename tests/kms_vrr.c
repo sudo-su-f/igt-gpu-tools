@@ -851,7 +851,16 @@ test_seamless_virtual_rr_basic(data_t *data, enum pipe pipe, igt_output_t *outpu
 	/* Switch to Virtual RR */
 	virtual_mode = *igt_output_get_mode(output);
 
-	for (vrefresh = data->range.min + step_size; vrefresh < data->range.max; vrefresh += step_size) {
+	/*
+	 * Start virtual RR testing from above the midpoint of the VRR range when multiple
+	 * modes are available. This avoids the driver mode adjustment. which can cause an
+	 * unintended clock change.
+	 */
+	vrefresh = (output->config.connector->count_modes > 1) ?
+		   (((data->range.max + data->range.min) / 2) + step_size) :
+		   data->range.min + step_size;
+
+	for ( ; vrefresh < data->range.max; vrefresh += step_size) {
 		virtual_rr_vrr_range_mode(&virtual_mode, vrefresh);
 
 		igt_info("Requesting Virtual Mode with Refresh Rate (%u Hz): \n", vrefresh);
