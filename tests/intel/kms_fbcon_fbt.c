@@ -461,7 +461,6 @@ igt_main
 	igt_describe("Test the relationship between fbcon and the frontbuffer "
 		     "tracking infrastructure with fbc enabled.");
 	igt_subtest("fbc") {
-		/* FBC disabled: Wa_16023588340 */
 		igt_require_f(!IS_BATTLEMAGE(drm.devid), "FBC isn't supported on BMG\n");
 		subtest(&drm, &fbc, false);
 	}
@@ -474,7 +473,6 @@ igt_main
 	igt_describe("Suspend test to validate  the relationship between fbcon and the frontbuffer "
 		     "tracking infrastructure with fbc enabled.");
 	igt_subtest("fbc-suspend") {
-		/* FBC disabled: Wa_16023588340 */
 		igt_require_f(!IS_BATTLEMAGE(drm.devid), "FBC isn't supported on BMG\n");
 		subtest(&drm, &fbc, true);
 	}

@@ -2612,7 +2612,6 @@ static void prepare_subtest_data(const struct test_mode *t,
 
 static void prepare_subtest_screens(const struct test_mode *t)
 {
-	/* FBC disabled: Wa_16023588340 */
 	igt_skip_on_f((IS_BATTLEMAGE(drm.devid) && t->feature == FEATURE_FBC),
 		      "FBC isn't supported on BMG\n");
 
@@ -2660,7 +2659,6 @@ static void prepare_subtest(const struct test_mode *t,
  */
 static void rte_subtest(const struct test_mode *t)
 {
-	/* FBC disabled: Wa_16023588340 */
 	igt_skip_on_f((IS_BATTLEMAGE(drm.devid) && t->feature == FEATURE_FBC),
 		      "FBC isn't supported on BMG\n");
 
@@ -4165,7 +4163,6 @@ igt_main_args("", long_options, help_str, opt_handler, NULL)
 			t.flip = -1;
 			t.tiling = opt.tiling;
 
-			/* FBC disabled: Wa_16023588340 */
 			igt_skip_on_f((IS_BATTLEMAGE(drm.devid) && t.feature == FEATURE_FBC),
 				      "FBC isn't supported on BMG\n");
 

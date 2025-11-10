@@ -380,7 +380,6 @@ igt_main
 							      data.output) {
 					data.mode = igt_output_get_mode(data.output);
 
-					/* FBC disabled: Wa_16023588340 */
 					igt_skip_on_f((IS_BATTLEMAGE(data.devid) && data.feature == FEATURE_FBC),
 						       "FBC isn't supported on BMG\n");
 
