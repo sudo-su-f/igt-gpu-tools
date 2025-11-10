@@ -203,6 +203,7 @@ enum plane_move_postion {
 
 typedef struct {
 	int drm_fd;
+	uint32_t devid;
 	int debugfs_fd;
 	igt_display_t display;
 	drmModeModeInfo *mode;
@@ -559,6 +560,9 @@ static void prepare(data_t *data)
 	igt_plane_set_size(primary, view_w, view_h);
 	igt_plane_set_position(primary, 0, 0);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
+
+	igt_skip_on_f(IS_BATTLEMAGE(data->devid) && data->op_fbc_mode == FBC_ENABLED,
+		      "FBC isn't supported on BMG\n");
 
 	if (data->coexist_feature & FEATURE_DSC)
 		igt_require_f(igt_is_dsc_enabled(data->drm_fd, output->name),
@@ -1201,7 +1205,8 @@ igt_main
 
 		display_init(&data);
 
-		disp_ver = intel_display_ver(intel_get_drm_devid(data.drm_fd));
+		data.devid = intel_get_drm_devid(data.drm_fd);
+		disp_ver = intel_display_ver(data.devid);
 		fbc_chipset_support = intel_fbc_supported_on_chipset(data.drm_fd, data.pipe);
 
 		data.damage_area_count = MAX_DAMAGE_AREAS;
