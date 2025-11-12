@@ -7,13 +7,13 @@ igt@amdgpu.*
 igt@msm.*
 igt@nouveau_.*
 igt@panfrost.*
+igt@panthor.*
 igt@v3d.*
 igt@vc4.*
 igt@vgem_.*
 igt@.*virtgpu.*
 igt@vkms.*
 igt@vmwgfx.*
-igt@panthor.*
 ##################################################################
 # Exclude all i915 tests
 ##################################################################
