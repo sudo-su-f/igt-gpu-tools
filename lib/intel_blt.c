@@ -1655,7 +1655,7 @@ uint64_t emit_blt_fast_copy(int fd,
 	struct gen12_fast_copy_data data = {};
 	uint64_t dst_offset, src_offset, bb_offset;
 	uint32_t bbe = MI_BATCH_BUFFER_END;
-	uint32_t *bb;
+	uint8_t *bb;
 
 	data.dw00.client = 0x2;
 	data.dw00.opcode = 0x42;
@@ -1717,9 +1717,9 @@ uint64_t emit_blt_fast_copy(int fd,
 	bb_pos += sizeof(data);
 
 	if (emit_bbe) {
-		igt_assert(bb_pos + sizeof(uint32_t) < blt->bb.size);
+		igt_assert(bb_pos + sizeof(bbe) < blt->bb.size);
 		memcpy(bb + bb_pos, &bbe, sizeof(bbe));
-		bb_pos += sizeof(uint32_t);
+		bb_pos += sizeof(bbe);
 	}
 
 	if (blt->print_bb) {
