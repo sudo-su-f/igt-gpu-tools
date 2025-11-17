@@ -1629,6 +1629,60 @@ static void dump_bb_fast_cmd(struct gen12_fast_copy_data *data)
 		 cmd[9], data->dw09.src_address_hi);
 }
 
+struct xe_flush_dw_cmd {
+	struct {
+		uint32_t length:	BITRANGE(0, 5);
+		uint32_t rsvd0:		BITRANGE(6, 7);
+		uint32_t notify_en: 	BITRANGE(8, 8);
+		uint32_t flush_llc:	BITRANGE(9, 9);
+		uint32_t rsvd1:		BITRANGE(10, 13);
+		uint32_t postsync:	BITRANGE(14, 15);
+		uint32_t flush_ccs:	BITRANGE(16, 16);
+		uint32_t rsvd2:		BITRANGE(17, 17);
+		uint32_t tlb_inval:	BITRANGE(18, 18);
+		uint32_t rsvd3:		BITRANGE(19, 20);
+		uint32_t store_index:	BITRANGE(21, 21);
+		uint32_t rsvd4:		BITRANGE(22, 22);
+		uint32_t opcode:	BITRANGE(23, 28);
+		uint32_t client:	BITRANGE(29, 31);
+	} dw00;
+
+	uint32_t dw01;
+	uint32_t dw02;
+	uint32_t dw03;
+	uint32_t dw04;
+};
+
+/**
+ * emit_xe_flush_dw:
+ * @fd: drm fd
+ * @blt: blitter data which provides the BB pointer
+ * @bb_pos: position at which to insert the flush command
+ *
+ * Function emits a flush instruction to the BB
+ *
+ * Returns:
+ * Next write position in batch.
+ */
+uint64_t emit_xe_flush_dw(int fd, const struct blt_copy_data *blt,
+			  uint64_t bb_pos)
+{
+	uint8_t *bb;
+	struct xe_flush_dw_cmd data = {};
+
+	igt_assert(bb_pos + sizeof(data) < blt->bb.size);
+
+	bb = bo_map(fd, blt->bb.handle, blt->bb.size, blt->driver);
+	data.dw00.opcode = 0x26;
+	data.dw00.length = 3;
+	memcpy(bb + bb_pos, &data, sizeof(data));
+	bb_pos += sizeof(data);
+
+	munmap(bb, blt->bb.size);
+
+	return bb_pos;
+}
+
 /**
  * emit_blt_fast_copy:
  * @fd: drm fd
