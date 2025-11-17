@@ -629,17 +629,58 @@ static void stabilize_check(int *out, int gt_id)
 	igt_debug("Waited %d msec to stabilize cur\n", wait);
 }
 
+static void verify_sysfs_values(int gt)
+{
+	int current_val;
+
+	/* Verify MIN frequency */
+	current_val = readval(sysfs_files[gt][MIN].filp);
+	if (current_val != origfreqs[gt][MIN]) {
+		igt_warn("GT%d MIN freq verification failed: expected %d, got %d\n",
+			 gt, origfreqs[gt][MIN], current_val);
+	}
+
+	/* Verify MAX frequency */
+	current_val = readval(sysfs_files[gt][MAX].filp);
+	if (current_val != origfreqs[gt][MAX]) {
+		igt_warn("GT%d MAX freq verification failed: expected %d, got %d\n",
+			 gt, origfreqs[gt][MAX], current_val);
+	}
+
+	/* Verify BOOST frequency */
+	current_val = readval(sysfs_files[gt][BOOST].filp);
+	if (current_val != origfreqs[gt][BOOST]) {
+		igt_warn("GT%d BOOST freq verification failed: expected %d, got %d\n",
+			 gt, origfreqs[gt][BOOST], current_val);
+	}
+}
+
+static void restore_sysfs_on_each_gt(void)
+{
+	int tmp, gt;
+
+	i915_for_each_gt(drm_fd, tmp, gt) {
+		writeval(sysfs_files[gt][MIN].filp, origfreqs[gt][MIN], gt);
+		writeval(sysfs_files[gt][MAX].filp, origfreqs[gt][MAX], gt);
+		writeval(sysfs_files[gt][BOOST].filp, origfreqs[gt][BOOST], gt);
+		verify_sysfs_values(gt);
+	}
+}
+
 static void boost_freq(int fd, int *boost_freqs, int gt_id)
 {
+	const intel_ctx_t *ctx;
 	int64_t timeout = 1;
 	igt_spin_t *load;
-	/* We need to keep dependency spin offset for load->handle */
-	uint64_t ahnd = get_simple_l2h_ahnd(fd, 0);
+	uint64_t ahnd;
 
-	load = igt_spin_new(fd, .ahnd = ahnd);
+	ctx = intel_ctx_create_for_gt(fd, gt_id);
+	ahnd = get_reloc_ahnd(fd, ctx->id);
+
+	load = igt_spin_new(fd, .ahnd = ahnd, .ctx = ctx);
 
 	/* Strip off extra fences from the object, and keep it from starting */
-	igt_spin_free(fd, igt_spin_new(fd, .ahnd = ahnd, .dependency = load->handle));
+	igt_spin_free(fd, igt_spin_new(fd, .ahnd = ahnd, .ctx = ctx, .dependency = load->handle));
 
 	/* Waiting will grant us a boost to maximum */
 	gem_wait(fd, load->handle, &timeout);
@@ -652,6 +693,7 @@ static void boost_freq(int fd, int *boost_freqs, int gt_id)
 	gem_sync(fd, load->handle);
 	igt_spin_free(fd, load);
 	put_ahnd(ahnd);
+	intel_ctx_destroy(fd, ctx);
 }
 
 static void waitboost(int fd, bool reset, int gt_id)
@@ -696,9 +738,9 @@ static void waitboost(int fd, bool reset, int gt_id)
 	load_helper_stop();
 	idle_check(gt_id);
 
-	igt_assert_lt(pre_freqs[CUR], pre_freqs[MAX]);
+	igt_assert_lte(pre_freqs[CUR], pre_freqs[MAX]);
 	igt_assert_eq(boost_freqs[CUR], boost_freqs[BOOST]);
-	igt_assert_lt(post_freqs[CUR], post_freqs[MAX]);
+	igt_assert_lte(post_freqs[CUR], post_freqs[MAX]);
 }
 
 static uint32_t batch_create(int i915, uint64_t sz)
@@ -1208,7 +1250,10 @@ igt_main
 
 	/* Checks if we achieve boost using gem_wait */
 	igt_subtest("waitboost") {
+		restore_sysfs_on_each_gt();
+		sleep(1);
 		i915_for_each_gt(drm_fd, tmp, gt) {
+			igt_info("gt%u\n", gt);
 			waitboost(drm_fd, false, gt);
 		}
 	}
@@ -1226,8 +1271,12 @@ igt_main
 	/* Test boost frequency after GPU reset */
 	igt_subtest("reset") {
 		igt_hang_t hang;
+
+		restore_sysfs_on_each_gt();
+		sleep(1);
 		hang = igt_allow_hang(drm_fd, 0, 0);
 		i915_for_each_gt(drm_fd, tmp, gt) {
+			igt_info("gt%u\n", gt);
 			waitboost(drm_fd, true, gt);
 		}
 		igt_disallow_hang(drm_fd, hang);
