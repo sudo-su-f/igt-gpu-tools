@@ -1290,9 +1290,9 @@ uint64_t emit_blt_ctrl_surf_copy(int fd,
 	size_t data_sz;
 	uint64_t dst_offset, src_offset, bb_offset, alignment;
 	uint32_t bbe = MI_BATCH_BUFFER_END;
-	uint32_t *bb;
 	uint32_t ccs_per_page, max_blocks, src_step, dst_step;
 	int32_t left_blocks;
+	uint8_t *bb;
 
 	igt_assert_f(ahnd, "ctrl-surf-copy supports softpin only\n");
 	igt_assert_f(surf, "ctrl-surf-copy requires data to do ctrl-surf-copy blit\n");
@@ -1408,9 +1408,9 @@ uint64_t emit_blt_ctrl_surf_copy(int fd,
 	}
 
 	if (emit_bbe) {
-		igt_assert(bb_pos + sizeof(uint32_t) < surf->bb.size);
+		igt_assert(bb_pos + sizeof(bbe) < surf->bb.size);
 		memcpy(bb + bb_pos, &bbe, sizeof(bbe));
-		bb_pos += sizeof(uint32_t);
+		bb_pos += sizeof(bbe);
 	}
 
 	munmap(bb, surf->bb.size);
@@ -2025,8 +2025,8 @@ static uint64_t emit_blt_mem_copy(int fd, uint64_t ahnd,
 	uint64_t dst_offset, src_offset, shift;
 	uint32_t width, height, width_max, height_max, remain;
 	uint32_t bbe = MI_BATCH_BUFFER_END;
-	uint32_t *bb;
 	uint32_t devid = intel_get_drm_devid(fd);
+	uint8_t *bb;
 
 	if (mem->mode == MODE_BYTE) {
 		data.dw01.byte_copy.width = -1;
@@ -2137,9 +2137,9 @@ static uint64_t emit_blt_mem_copy(int fd, uint64_t ahnd,
 	}
 
 	if (emit_bbe) {
-		igt_assert(bb_pos + sizeof(uint32_t) < mem->bb.size);
+		igt_assert(bb_pos + sizeof(bbe) < mem->bb.size);
 		memcpy(bb + bb_pos, &bbe, sizeof(bbe));
-		bb_pos += sizeof(uint32_t);
+		bb_pos += sizeof(bbe);
 	}
 
 	munmap(bb, mem->bb.size);
