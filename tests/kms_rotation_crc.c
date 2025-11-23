@@ -296,7 +296,7 @@ static void prepare_crtc(data_t *data, igt_output_t *output, enum pipe pipe,
                          igt_plane_t *plane, bool start_crc)
 {
         igt_display_t *display = &data->display;
-        int crtc_offset = display->pipes[pipe].crtc_offset;
+	int crtc_offset = display->pipes[pipe].crtc_offset;
 
 	cleanup_crtc(data);
 
@@ -313,8 +313,8 @@ static void prepare_crtc(data_t *data, igt_output_t *output, enum pipe pipe,
 	 */
 	if (!is_amdgpu_device(data->gfx_fd))
 		igt_display_commit2(display, COMMIT_ATOMIC);
-        data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, crtc_offset,
-                                          IGT_PIPE_CRC_SOURCE_AUTO);
+	data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, crtc_offset,
+	                                          IGT_PIPE_CRC_SOURCE_AUTO);
 
 	if (!is_amdgpu_device(data->gfx_fd) && start_crc)
 		igt_pipe_crc_start(data->pipe_crc);
@@ -932,8 +932,8 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 		{IGT_ROTATION_270, .2f, .4f, I915_FORMAT_MOD_Y_TILED },
 		{IGT_ROTATION_270, .2f, .4f, I915_FORMAT_MOD_Yf_TILED },
 	};
-        int crtc_offset = display->pipes[pipe].crtc_offset;
-        bool found = false;
+	int crtc_offset = display->pipes[pipe].crtc_offset;
+	bool found = false;
 
 	igt_display_require_output(display);
 
@@ -954,8 +954,8 @@ static void test_multi_plane_rotation(data_t *data, enum pipe pipe)
 		p[0].plane = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 		p[1].plane = igt_output_get_plane_type(output, DRM_PLANE_TYPE_OVERLAY);
 
-                data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, crtc_offset,
-                                                  IGT_PIPE_CRC_SOURCE_AUTO);
+		data->pipe_crc = igt_pipe_crc_new(data->gfx_fd, crtc_offset,
+			IGT_PIPE_CRC_SOURCE_AUTO);
 		igt_pipe_crc_start(data->pipe_crc);
 
 		for (i = 0; i < ARRAY_SIZE(planeconfigs); i++) {

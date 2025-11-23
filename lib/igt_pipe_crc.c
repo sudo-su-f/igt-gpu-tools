@@ -183,15 +183,15 @@ char *igt_crc_to_string(igt_crc_t *crc)
 #define MAX_LINE_LEN (10 + 11 * MAX_CRC_ENTRIES + 1)
 
 struct _igt_pipe_crc {
-int fd;
-int dir;
-int ctl_fd;
-int crc_fd;
-int flags;
+	int fd;
+	int dir;
+	int ctl_fd;
+	int crc_fd;
+	int flags;
 
-enum pipe pipe;
-int crtc_offset;
-char *source;
+	enum pipe pipe;
+	int crtc_offset;
+	char *source;
 };
 
 /**
@@ -271,7 +271,7 @@ igt_pipe_crc_t *
 igt_pipe_crc_new(int fd, int crtc_offset, const char *source)
 {
 	return pipe_crc_new(fd, crtc_offset, source, O_RDONLY);
-}
+	}
 
 /**
  * igt_pipe_crc_new_nonblock:
@@ -291,7 +291,7 @@ igt_pipe_crc_t *
 igt_pipe_crc_new_nonblock(int fd, int crtc_offset, const char *source)
 {
 	return pipe_crc_new(fd, crtc_offset, source, O_RDONLY | O_NONBLOCK);
-}
+	}
 
 /**
  * igt_pipe_crc_free:

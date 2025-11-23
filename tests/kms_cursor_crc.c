@@ -556,7 +556,7 @@ static void cleanup_crtc(data_t *data)
 	igt_display_t *display = &data->display;
 
 	igt_pipe_crc_stop(data->pipe_crc);
-	igt_pipe_crc_free(data->pipe_crc);
+		igt_pipe_crc_free(data->pipe_crc);
 	data->pipe_crc = NULL;
 
 	cairo_surface_destroy(data->surface);
@@ -604,12 +604,12 @@ static void prepare_crtc(data_t *data, int cursor_w, int cursor_h)
 
 	igt_display_commit(display);
 
-        /* create the pipe_crc object for this pipe */
-        if (data->pipe_crc)
-                igt_pipe_crc_free(data->pipe_crc);
-        data->pipe_crc = igt_pipe_crc_new(data->drm_fd,
-                                          display->pipes[data->pipe].crtc_offset,
-                                          IGT_PIPE_CRC_SOURCE_AUTO);
+	/* create the pipe_crc object for this pipe */
+	if (data->pipe_crc)
+		igt_pipe_crc_free(data->pipe_crc);
+	data->pipe_crc = igt_pipe_crc_new(data->drm_fd,
+			  display->pipes[data->pipe].crtc_offset,
+			  IGT_PIPE_CRC_SOURCE_AUTO);
 
 	/* x/y position where the cursor is still fully visible */
 	data->left = 0;

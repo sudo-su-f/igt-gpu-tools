@@ -101,15 +101,15 @@ static void test_init(data_t *data, enum pipe pipe_id, igt_output_t *output,
 	data->primary = igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_PRIMARY);
 	if (flags & TEST_OVERLAY)
 		data->overlay = igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_OVERLAY);
-        data->cursor = igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_CURSOR);
+	data->cursor = igt_pipe_get_plane_type(data->pipe, DRM_PLANE_TYPE_CURSOR);
 
-        igt_info("Using (pipe %s + %s) to run the subtest.\n",
-                 kmstest_pipe_name(data->pipe_id), igt_output_name(data->output));
+	igt_info("Using (pipe %s + %s) to run the subtest.\n",
+	         kmstest_pipe_name(data->pipe_id), igt_output_name(data->output));
 
-        igt_require_pipe_crc(data->drm_fd);
-        data->pipe_crc = igt_pipe_crc_new(data->drm_fd,
-                                          data->display.pipes[data->pipe_id].crtc_offset,
-                                          IGT_PIPE_CRC_SOURCE_AUTO);
+	igt_require_pipe_crc(data->drm_fd);
+	data->pipe_crc = igt_pipe_crc_new(data->drm_fd,
+	                                  data->display.pipes[data->pipe_id].crtc_offset,
+	                                  IGT_PIPE_CRC_SOURCE_AUTO);
 
 	/* Overlay rectangle for a rect in the center of the screen */
 	data->or.x = data->mode->hdisplay / 4;
