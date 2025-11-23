@@ -333,7 +333,7 @@ igt_main
 		igt_display_reset(&data.display);
 	}
 
-	for_each_pipe_static(pipe) {
+        for_each_pipe(&data.display, pipe) {
 		igt_fixture {
 			int dir;
 

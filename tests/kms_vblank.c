@@ -144,7 +144,7 @@ static void prepare_crtc(data_t *data, int fd, igt_output_t *output)
 	igt_display_commit(display);
 
 	igt_wait_for_vblank(fd,
-			display->pipes[data->pipe].crtc_offset);
+                    igt_pipe_get_crtc_index(display, data->pipe));
 }
 
 static void cleanup_crtc(data_t *data, int fd, igt_output_t *output)

@@ -101,7 +101,7 @@ static bool test_pipe_degamma(data_t *data,
 	degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	degamma_full = generate_table_max(data->degamma_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 	igt_output_override_mode(output, mode);
 
 	/* Create a framebuffer at the size of the output. */
@@ -132,7 +132,7 @@ static bool test_pipe_degamma(data_t *data,
 	igt_plane_set_fb(primary, &fb);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
@@ -144,7 +144,7 @@ static bool test_pipe_degamma(data_t *data,
 	set_degamma(data, primary->pipe, degamma_full);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
@@ -191,7 +191,7 @@ static bool test_pipe_gamma(data_t *data,
 
 	gamma_full = generate_table_max(data->gamma_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 	igt_output_override_mode(output, mode);
 
 	/* Create a framebuffer at the size of the output. */
@@ -222,7 +222,7 @@ static bool test_pipe_gamma(data_t *data,
 	igt_plane_set_fb(primary, &fb);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
@@ -233,7 +233,7 @@ static bool test_pipe_gamma(data_t *data,
 	igt_plane_set_fb(primary, &fb);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
@@ -288,7 +288,7 @@ static bool test_pipe_legacy_gamma(data_t *data,
 	green_lut = malloc(sizeof(uint16_t) * legacy_lut_size);
 	blue_lut = malloc(sizeof(uint16_t) * legacy_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 	igt_output_override_mode(output, mode);
 
 	/* Create a framebuffer at the size of the output. */
@@ -319,7 +319,7 @@ static bool test_pipe_legacy_gamma(data_t *data,
 	igt_plane_set_fb(primary, &fb);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
@@ -336,7 +336,7 @@ static bool test_pipe_legacy_gamma(data_t *data,
 					  legacy_lut_size, red_lut, green_lut, blue_lut), 0);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
@@ -393,7 +393,7 @@ static bool test_pipe_legacy_gamma_reset(data_t *data,
 		degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	gamma_zero = generate_table_zero(data->gamma_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 
 	/* Ensure we have a clean state to start with. */
 	disable_degamma(primary->pipe);
@@ -526,7 +526,7 @@ static bool test_pipe_ctm(data_t *data,
 
 	igt_require(igt_pipe_obj_has_prop(primary->pipe, IGT_CRTC_CTM));
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 	igt_output_override_mode(output, mode);
 
 	/* Create a framebuffer at the size of the output. */
@@ -579,7 +579,7 @@ static bool test_pipe_ctm(data_t *data,
 	set_ctm(primary->pipe, ctm_identity);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_software);
 
 	/* With CTM transformation. */
@@ -588,7 +588,7 @@ static bool test_pipe_ctm(data_t *data,
 	set_ctm(primary->pipe, ctm_matrix);
 	igt_display_commit(&data->display);
 	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
+                        igt_pipe_get_crtc_index(display, primary->pipe->index));
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_hardware);
 
 	/*
@@ -650,7 +650,7 @@ static void test_pipe_limited_range_ctm(data_t *data,
 	degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	gamma_linear = generate_table(data->gamma_lut_size, 1.0);
 
-	for_each_valid_output_on_pipe(&data->display, primary->pipe->pipe, output) {
+    for_each_valid_output_on_pipe(&data->display, primary->pipe->index, output) {
 		drmModeModeInfo *mode;
 		struct igt_fb fb_modeset, fb;
 		igt_crc_t crc_full, crc_limited;
@@ -661,7 +661,7 @@ static void test_pipe_limited_range_ctm(data_t *data,
 
 		has_broadcast_rgb_output = true;
 
-		igt_output_set_pipe(output, primary->pipe->pipe);
+            igt_output_set_pipe(output, primary->pipe->index);
 		mode = igt_output_get_mode(output);
 
 		/* Create a framebuffer at the size of the output. */
@@ -691,7 +691,7 @@ static void test_pipe_limited_range_ctm(data_t *data,
 		igt_plane_set_fb(primary, &fb);
 		igt_display_commit(&data->display);
 		igt_wait_for_vblank(data->drm_fd,
-				display->pipes[primary->pipe->pipe].crtc_offset);
+                            igt_pipe_get_crtc_index(display, primary->pipe->index));
 		igt_pipe_crc_collect_crc(data->pipe_crc, &crc_full);
 
 		/* Set the output into limited range. */
@@ -700,7 +700,7 @@ static void test_pipe_limited_range_ctm(data_t *data,
 		igt_plane_set_fb(primary, &fb);
 		igt_display_commit(&data->display);
 		igt_wait_for_vblank(data->drm_fd,
-				display->pipes[primary->pipe->pipe].crtc_offset);
+                            igt_pipe_get_crtc_index(display, primary->pipe->index));
 		igt_pipe_crc_collect_crc(data->pipe_crc, &crc_limited);
 
 		/* And reset.. */
@@ -756,7 +756,7 @@ static void test_setup(data_t *data, enum pipe p)
 
 	data->primary = igt_pipe_get_plane_type(pipe, DRM_PLANE_TYPE_PRIMARY);
 	data->pipe_crc = igt_pipe_crc_new(data->drm_fd,
-					  data->primary->pipe->pipe,
+                                      data->primary->pipe->index,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
 	igt_display_reset(&data->display);

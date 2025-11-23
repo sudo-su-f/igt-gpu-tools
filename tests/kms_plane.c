@@ -793,7 +793,7 @@ restart_round:
 				igt_display_t *display = &data->display;
 
 				igt_wait_for_vblank(data->drm_fd,
-						display->pipes[pipe].crtc_offset);
+                                            igt_pipe_get_crtc_index(display, pipe));
 			}
 		}
 

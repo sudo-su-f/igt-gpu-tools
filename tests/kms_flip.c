@@ -522,14 +522,15 @@ struct vblank_reply {
 	struct timeval ts;
 };
 
-static int __wait_for_vblank(unsigned int flags, int crtc_idx,
-			      int target_seq, unsigned long ret_data,
-			      struct vblank_reply *reply)
+static int __wait_for_vblank(unsigned int flags, int pipe_idx,
+                              int target_seq, unsigned long ret_data,
+                              struct vblank_reply *reply)
 {
-	drmVBlank wait_vbl;
-	int ret;
-	uint32_t pipe_id_flag;
-	bool event = !(flags & TEST_VBLANK_BLOCK);
+        drmVBlank wait_vbl;
+        int ret;
+        uint32_t pipe_id_flag;
+        bool event = !(flags & TEST_VBLANK_BLOCK);
+        int crtc_idx = igt_pipe_get_crtc_index(&display, pipe_idx);
 
 	memset(&wait_vbl, 0, sizeof(wait_vbl));
 	pipe_id_flag = kmstest_get_vbl_flag(crtc_idx);
@@ -1367,18 +1368,19 @@ static void free_test_output(struct test_output *o)
 	}
 }
 
-static bool calibrate_ts(struct test_output *o, int crtc_idx)
+static bool calibrate_ts(struct test_output *o, int pipe_idx)
 {
 #define CALIBRATE_TS_STEPS 16
-	drmVBlank wait;
-	igt_stats_t stats;
-	uint32_t last_seq;
-	uint64_t last_timestamp;
-	double expected;
-	double mean;
-	double stddev;
-	bool failed = false;
-	int n;
+        drmVBlank wait;
+        igt_stats_t stats;
+        uint32_t last_seq;
+        uint64_t last_timestamp;
+        double expected;
+        double mean;
+        double stddev;
+        bool failed = false;
+        int n;
+        int crtc_idx = igt_pipe_get_crtc_index(&display, pipe_idx);
 
 	memset(&wait, 0, sizeof(wait));
 	wait.request.type = kmstest_get_vbl_flag(crtc_idx);
