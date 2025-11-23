@@ -693,12 +693,12 @@ static void test_deep_pkgc_state(data_t *data)
 	data->output = output;
 	setup_videoplayback(data);
 
-	primary = igt_output_get_plane_type(data->output, DRM_PLANE_TYPE_PRIMARY);
-	igt_plane_set_fb(primary, &data->fb_rgb);
-	igt_display_commit(&data->display);
-	/* Wait for the vblank to sync the frame time */
-	igt_wait_for_vblank_count(data->drm_fd, data->display.pipes[pipe].crtc_offset, 1);
-	pre_val = read_pkgc_counter(data->debugfs_root_fd);
+        primary = igt_output_get_plane_type(data->output, DRM_PLANE_TYPE_PRIMARY);
+        igt_plane_set_fb(primary, &data->fb_rgb);
+        igt_display_commit(&data->display);
+        /* Wait for the vblank to sync the frame time */
+        igt_wait_vblank_count_on_pipe(&data->display, pipe, 1);
+        pre_val = read_pkgc_counter(data->debugfs_root_fd);
 	/* Add a half-frame delay to ensure the flip occurs when the frame is active. */
 	usleep(delay * 0.5);
 

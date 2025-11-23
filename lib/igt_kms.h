@@ -448,15 +448,21 @@ typedef struct igt_plane {
 } igt_plane_t;
 
 /*
- * This struct represents a hardware pipe
+ * This struct represents a logical KMS pipe / CRTC.
  *
- * DRM_IOCTL_WAIT_VBLANK notion of pipe is confusing and we are using
- * crtc_offset instead (refer people to #igt_wait_for_vblank_count)
+ * Tests should treat this as the main "pipe" abstraction: the thing you put
+ * planes on, read CRCs from, wait for vblank on, etc. Hardware pipe details
+ * are optional metadata and may change over time (virtualization, joiners).
  */
 struct igt_pipe {
-	igt_display_t *display;
-	/* ID of a hardware pipe */
-	enum pipe pipe;
+        igt_display_t *display;
+
+        /* Stable logical index: 0..display->n_pipes-1 */
+        int index;
+
+        /* KMS CRTC backing this logical pipe */
+        uint32_t crtc_id;       /* drmModeRes->crtcs[index] */
+        uint32_t crtc_index;    /* index into drmModeRes->crtcs[]; used for vblank */
 
         /*
          * Indicates whether this pipe struct is valid and can be used. This can
@@ -467,22 +473,33 @@ struct igt_pipe {
          */
         bool valid;
 
-	int n_planes;
-	int num_primary_planes;
-	int plane_cursor;
-	int plane_primary;
-	igt_plane_t *planes;
+        int n_planes;
+        int num_primary_planes;
+        int plane_cursor;
+        int plane_primary;
+        igt_plane_t *planes;
 
-	uint64_t changed;
-	uint32_t props[IGT_NUM_CRTC_PROPS];
-	uint64_t values[IGT_NUM_CRTC_PROPS];
+        uint64_t changed;
+        uint32_t props[IGT_NUM_CRTC_PROPS];
+        uint64_t values[IGT_NUM_CRTC_PROPS];
 
-	/* ID of KMS CRTC object */
-	uint32_t crtc_id;
-	/* offset of a pipe in drmModeRes.crtcs */
-	uint32_t crtc_offset;
+        int32_t out_fence_fd;
 
-	int32_t out_fence_fd;
+        /* -------- Optional hardware mapping (driver-specific) -------- */
+
+        /* Current primary hw pipe, if known (PIPE_A/B/...) */
+        enum pipe hw_pipe;      /* or PIPE_NONE if unknown/not applicable */
+        bool hw_pipe_valid;
+
+        /*
+         * For joiner / split-pipe configurations: mask of hw pipes that form
+         * this logical pipe. The exact meaning is driver-specific.
+         */
+        uint32_t hw_pipe_mask;
+
+        /* Legacy fields kept for compatibility during transition. */
+        enum pipe pipe;
+        uint32_t crtc_offset;
 };
 
 typedef struct {
@@ -611,6 +628,13 @@ const char *igt_plane_rotation_name(igt_rotation_t rotation);
 
 void igt_wait_for_vblank(int drm_fd, int crtc_offset);
 void igt_wait_for_vblank_count(int drm_fd, int crtc_offset, int count);
+uint32_t igt_pipe_get_crtc_id(igt_display_t *display, int index);
+int igt_pipe_get_crtc_index(igt_display_t *display, int index);
+igt_pipe_t *igt_get_pipe(igt_display_t *display, int index);
+int igt_wait_vblank_on_pipe(igt_display_t *display, int pipe_index);
+int igt_wait_vblank_count_on_pipe(igt_display_t *display, int pipe_index, int count);
+bool igt_pipe_get_hw_pipe(igt_display_t *display, int pipe_index, enum pipe *out_hw_pipe);
+uint32_t igt_pipe_get_hw_pipe_mask(igt_display_t *display, int pipe_index);
 
 /**
  * igt_output_is_connected:
@@ -688,7 +712,7 @@ static inline bool igt_output_is_connected(igt_output_t *output)
  * depencies.
  */
 #define for_each_pipe_static(pipe) \
-	for (pipe = 0; pipe < IGT_MAX_PIPES; pipe++)
+        for (pipe = 0; pipe < IGT_MAX_PIPES; pipe++)
 
 /**
  * for_each_pipe:
@@ -702,8 +726,8 @@ static inline bool igt_output_is_connected(igt_output_t *output)
  * Use #for_each_pipe_static instead.
  */
 #define for_each_pipe(display, pipe) \
-	for_each_pipe_static(pipe) \
-		for_each_if((display)->pipes[(pipe)].valid)
+        for (int pipe = 0; pipe < (display)->n_pipes; pipe++) \
+                for_each_if((display)->pipes[(pipe)].valid)
 
 /**
  * for_each_pipe_with_valid_output:

@@ -128,24 +128,22 @@ static bool test_pipe_degamma(data_t *data,
 	igt_display_commit(&data->display);
 
 	/* Draw solid colors with linear degamma transformation. */
-	paint_rectangles(data, mode, red_green_blue, &fb);
-	igt_plane_set_fb(primary, &fb);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
+        paint_rectangles(data, mode, red_green_blue, &fb);
+        igt_plane_set_fb(primary, &fb);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
 	 * Draw a gradient with degamma LUT to remap all
 	 * values to max red/green/blue.
 	 */
-	paint_gradient_rectangles(data, mode, red_green_blue, &fb);
-	igt_plane_set_fb(primary, &fb);
-	set_degamma(data, primary->pipe, degamma_full);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
+        paint_gradient_rectangles(data, mode, red_green_blue, &fb);
+        igt_plane_set_fb(primary, &fb);
+        set_degamma(data, primary->pipe, degamma_full);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
 	 * Verify that the CRC of the software computed output is
@@ -218,23 +216,21 @@ static bool test_pipe_gamma(data_t *data,
 	igt_display_commit(&data->display);
 
 	/* Draw solid colors with no gamma transformation. */
-	paint_rectangles(data, mode, red_green_blue, &fb);
-	igt_plane_set_fb(primary, &fb);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
+        paint_rectangles(data, mode, red_green_blue, &fb);
+        igt_plane_set_fb(primary, &fb);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
 	 * Draw a gradient with gamma LUT to remap all values
 	 * to max red/green/blue.
 	 */
-	paint_gradient_rectangles(data, mode, red_green_blue, &fb);
-	igt_plane_set_fb(primary, &fb);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
+        paint_gradient_rectangles(data, mode, red_green_blue, &fb);
+        igt_plane_set_fb(primary, &fb);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
 	 * Verify that the CRC of the software computed output is
@@ -315,12 +311,11 @@ static bool test_pipe_legacy_gamma(data_t *data,
 	igt_display_commit(&data->display);
 
 	/* Draw solid colors with no gamma transformation. */
-	paint_rectangles(data, mode, red_green_blue, &fb);
-	igt_plane_set_fb(primary, &fb);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
+        paint_rectangles(data, mode, red_green_blue, &fb);
+        igt_plane_set_fb(primary, &fb);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullcolors);
 
 	/*
 	 * Draw a gradient with gamma LUT to remap all values
@@ -332,12 +327,11 @@ static bool test_pipe_legacy_gamma(data_t *data,
 	red_lut[0] = green_lut[0] = blue_lut[0] = 0;
 	for (i = 1; i < legacy_lut_size; i++)
 		red_lut[i] = green_lut[i] = blue_lut[i] = 0xffff;
-	igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, primary->pipe->crtc_id,
-					  legacy_lut_size, red_lut, green_lut, blue_lut), 0);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
+        igt_assert_eq(drmModeCrtcSetGamma(data->drm_fd, primary->pipe->crtc_id,
+                                          legacy_lut_size, red_lut, green_lut, blue_lut), 0);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_fullgamma);
 
 	/*
 	 * Verify that the CRC of the software computed output is
@@ -574,22 +568,20 @@ static bool test_pipe_ctm(data_t *data,
 	disable_ctm(primary->pipe);
 	igt_display_commit(&data->display);
 
-	paint_rectangles(data, mode, after, &fb);
-	igt_plane_set_fb(primary, &fb);
-	set_ctm(primary->pipe, ctm_identity);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_software);
+        paint_rectangles(data, mode, after, &fb);
+        igt_plane_set_fb(primary, &fb);
+        set_ctm(primary->pipe, ctm_identity);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_software);
 
 	/* With CTM transformation. */
-	paint_rectangles(data, mode, before, &fb);
-	igt_plane_set_fb(primary, &fb);
-	set_ctm(primary->pipe, ctm_matrix);
-	igt_display_commit(&data->display);
-	igt_wait_for_vblank(data->drm_fd,
-			    display->pipes[primary->pipe->pipe].crtc_offset);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_hardware);
+        paint_rectangles(data, mode, before, &fb);
+        igt_plane_set_fb(primary, &fb);
+        set_ctm(primary->pipe, ctm_matrix);
+        igt_display_commit(&data->display);
+        igt_wait_vblank_on_pipe(display, primary->pipe->index);
+        igt_pipe_crc_collect_crc(data->pipe_crc, &crc_hardware);
 
 	/*
 	 * Verify that the CRC of the software computed output is
@@ -686,22 +678,20 @@ static void test_pipe_limited_range_ctm(data_t *data,
 		set_gamma(data, primary->pipe, gamma_linear);
 		set_ctm(primary->pipe, ctm);
 
-		igt_output_set_prop_value(output, IGT_CONNECTOR_BROADCAST_RGB, BROADCAST_RGB_FULL);
-		paint_rectangles(data, mode, red_green_blue_limited, &fb);
-		igt_plane_set_fb(primary, &fb);
-		igt_display_commit(&data->display);
-		igt_wait_for_vblank(data->drm_fd,
-				display->pipes[primary->pipe->pipe].crtc_offset);
-		igt_pipe_crc_collect_crc(data->pipe_crc, &crc_full);
+                igt_output_set_prop_value(output, IGT_CONNECTOR_BROADCAST_RGB, BROADCAST_RGB_FULL);
+                paint_rectangles(data, mode, red_green_blue_limited, &fb);
+                igt_plane_set_fb(primary, &fb);
+                igt_display_commit(&data->display);
+                igt_wait_vblank_on_pipe(display, primary->pipe->index);
+                igt_pipe_crc_collect_crc(data->pipe_crc, &crc_full);
 
 		/* Set the output into limited range. */
-		igt_output_set_prop_value(output, IGT_CONNECTOR_BROADCAST_RGB, BROADCAST_RGB_16_235);
-		paint_rectangles(data, mode, red_green_blue_full, &fb);
-		igt_plane_set_fb(primary, &fb);
-		igt_display_commit(&data->display);
-		igt_wait_for_vblank(data->drm_fd,
-				display->pipes[primary->pipe->pipe].crtc_offset);
-		igt_pipe_crc_collect_crc(data->pipe_crc, &crc_limited);
+                igt_output_set_prop_value(output, IGT_CONNECTOR_BROADCAST_RGB, BROADCAST_RGB_16_235);
+                paint_rectangles(data, mode, red_green_blue_full, &fb);
+                igt_plane_set_fb(primary, &fb);
+                igt_display_commit(&data->display);
+                igt_wait_vblank_on_pipe(display, primary->pipe->index);
+                igt_pipe_crc_collect_crc(data->pipe_crc, &crc_limited);
 
 		/* And reset.. */
 		igt_output_set_prop_value(output, IGT_CONNECTOR_BROADCAST_RGB, BROADCAST_RGB_FULL);

@@ -209,14 +209,13 @@ static void cursor_enable(data_t *data)
 
 static void cursor_disable(data_t *data)
 {
-	igt_plane_set_fb(data->cursor, NULL);
-	igt_plane_set_position(data->cursor, 0, 0);
-	igt_display_commit(&data->display);
+        igt_plane_set_fb(data->cursor, NULL);
+        igt_plane_set_position(data->cursor, 0, 0);
+        igt_display_commit(&data->display);
 
-	/* do this wait here so it will not need to be added everywhere */
-	igt_wait_for_vblank_count(data->drm_fd,
-				  data->display.pipes[data->pipe].crtc_offset,
-				  data->vblank_wait_count);
+        /* do this wait here so it will not need to be added everywhere */
+        igt_wait_vblank_count_on_pipe(&data->display, data->pipe,
+                                      data->vblank_wait_count);
 }
 
 static bool chv_cursor_broken(data_t *data, int x)
@@ -297,12 +296,11 @@ static void do_single_test(data_t *data, int x, int y, bool hw_test,
 			return;
 		}
 
-		igt_display_commit(display);
+                igt_display_commit(display);
 
-		/* Extra vblank wait is because nonblocking cursor ioctl */
-		igt_wait_for_vblank_count(data->drm_fd,
-					  display->pipes[data->pipe].crtc_offset,
-					  data->vblank_wait_count);
+                /* Extra vblank wait is because nonblocking cursor ioctl */
+                igt_wait_vblank_count_on_pipe(display, data->pipe,
+                                              data->vblank_wait_count);
 
 		igt_pipe_crc_get_current(data->drm_fd, pipe_crc, hwcrc);
 
@@ -346,13 +344,12 @@ static void do_single_test(data_t *data, int x, int y, bool hw_test,
 		igt_plane_set_fb(data->primary, &data->primary_fb[swbufidx]);
 		igt_display_commit(display);
 
-		/* Wait for two more vblanks since cursor updates may not
-		 * synchronized to the same frame on AMD HW
-		 */
-		if (is_amdgpu_device(data->drm_fd))
-			igt_wait_for_vblank_count(data->drm_fd,
-				display->pipes[data->pipe].crtc_offset,
-				data->vblank_wait_count);
+                /* Wait for two more vblanks since cursor updates may not
+                 * synchronized to the same frame on AMD HW
+                 */
+                if (is_amdgpu_device(data->drm_fd))
+                        igt_wait_vblank_count_on_pipe(display, data->pipe,
+                                                      data->vblank_wait_count);
 
 		igt_pipe_crc_get_current(data->drm_fd, pipe_crc, &crc);
 		igt_assert_crc_equal(&crc, hwcrc);
@@ -732,12 +729,11 @@ static void timed_cursor_changes(data_t *data, void (changefunc)(data_t *, enum 
 	data->cursor = igt_output_get_plane_type(data->output, DRM_PLANE_TYPE_CURSOR);
 	changefunc(data, FIRSTIMAGE);
 
-	igt_display_commit(&data->display);
+        igt_display_commit(&data->display);
 
-	/* Extra vblank wait is because nonblocking cursor ioctl */
-	igt_wait_for_vblank_count(data->drm_fd,
-				  data->display.pipes[data->pipe].crtc_offset,
-				  data->vblank_wait_count);
+        /* Extra vblank wait is because nonblocking cursor ioctl */
+        igt_wait_vblank_count_on_pipe(&data->display, data->pipe,
+                                      data->vblank_wait_count);
 
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &crc1);
 

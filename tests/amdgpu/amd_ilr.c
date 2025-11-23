@@ -177,11 +177,10 @@ static void test_ilr_policy(data_t *data, igt_output_t *output)
 		igt_assert(link_rate_set < sizeof(data->supported_ilr));
 		igt_assert(data->supported_ilr[link_rate_set] > 0);
 
-		/* Secondly check trained BW is sufficient.
-		 * If BW is insufficient, crc retrieving will timeout
-		 */
-		igt_wait_for_vblank_count(data->drm_fd,
-					data->pipe->crtc_offset, 10);
+                /* Secondly check trained BW is sufficient.
+                 * If BW is insufficient, crc retrieving will timeout
+                 */
+                igt_wait_vblank_count_on_pipe(&data->display, data->pipe_id, 10);
 
 		igt_pipe_crc_collect_crc(data->pipe_crc, &data->crc_dprx);
 		crc_str = igt_crc_to_string(&data->crc_dprx);
