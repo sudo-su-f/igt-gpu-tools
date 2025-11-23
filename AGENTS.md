@@ -8,6 +8,13 @@ These instructions apply to the entire repository unless a more specific `AGENTS
 - Use `igt_describe()` for new tests to capture intent rather than a literal translation of the code.
 - For new library functions, consider providing helper variants without `igt_assert/igt_require/igt_skip` when those macros are used.
 - Keep runner logic independent of library helpers unless an exception already exists.
+- Indentation must use TAB characters, not spaces.
+- Do not change leading whitespace on existing lines unless absolutely required to implement the change.
+- Do not normalize or “fix” whitespace.
+- When adding new code:
+  - Use tabs for indentation.
+  - Match surrounding style for alignment (tabs vs spaces).
+- If a change would touch many lines only to change tabs/spaces, avoid that change.
 
 ## Test and API expectations
 - Tests must fall back to older kernel interfaces when newer ones are unavailable to allow use across kernel versions.
