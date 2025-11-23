@@ -846,11 +846,11 @@ static void compare_crcs(int fd, igt_display_t *display, igt_fb_t *ref_fb, igt_f
 	for_each_connected_output(display, output) {
 		mode = igt_output_get_mode(output);
 		pipe = &display->pipes[output->pending_pipe];
-		pipe_crc = igt_pipe_crc_new(fd, pipe->pipe,
-					    IGT_PIPE_CRC_SOURCE_AUTO);
+                pipe_crc = igt_pipe_crc_new(fd, pipe->index,
+                                            IGT_PIPE_CRC_SOURCE_AUTO);
 		plane = igt_pipe_get_plane_type(pipe, DRM_PLANE_TYPE_PRIMARY);
-		igt_require(igt_pipe_connector_valid(pipe->pipe, output));
-		igt_output_set_pipe(output, pipe->pipe);
+                igt_require(igt_pipe_connector_valid(pipe->index, output));
+                igt_output_set_pipe(output, pipe->index);
 
 		commit_fb(display, plane, ref_fb, mode);
 		igt_pipe_crc_collect_crc(pipe_crc, &ref_crc);

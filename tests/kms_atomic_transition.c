@@ -163,14 +163,14 @@ run_primary_test(data_t *data, enum pipe pipe, igt_output_t *output)
 
 		if (!(i & 1))
 			igt_wait_for_vblank(data->drm_fd,
-					data->display.pipes[pipe].crtc_offset);
+                                    igt_pipe_get_crtc_index(&data->display, pipe));
 
 		igt_plane_set_fb(primary, (i & 1) ? fb : NULL);
 		igt_display_commit2(&data->display, COMMIT_ATOMIC);
 
 		if (i & 1)
 			igt_wait_for_vblank(data->drm_fd,
-					data->display.pipes[pipe].crtc_offset);
+                                    igt_pipe_get_crtc_index(&data->display, pipe));
 
 		igt_plane_set_fb(primary, (i & 1) ? NULL : fb);
 	}
@@ -807,7 +807,7 @@ static unsigned set_combinations(data_t *data, unsigned mask, struct igt_fb *fb)
 		igt_plane_t *plane = igt_pipe_get_plane_type(&data->display.pipes[pipe],
 			DRM_PLANE_TYPE_PRIMARY);
 
-		enum pipe old_pipe = plane->ref->pipe->pipe;
+            int old_pipe = plane->ref->pipe->index;
 
 		/*
 		 * If a plane is being shared by multiple pipes, we must disable the pipe that

@@ -84,7 +84,7 @@ static bool test_pipe_degamma(data_t *data,
 
 	degamma_full = generate_table_max(data->degamma_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 
 	/* Create a framebuffer at the size of the output. */
 	fb_id = igt_create_fb(data->drm_fd,
@@ -173,7 +173,7 @@ static bool test_pipe_gamma(data_t *data,
 
 	gamma_full = generate_table_max(data->gamma_lut_size);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 
 	/* Create a framebuffer at the size of the output. */
 	fb_id = igt_create_fb(data->drm_fd,
@@ -260,7 +260,7 @@ static bool test_pipe_ctm(data_t *data,
 	degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	gamma_linear = generate_table(data->gamma_lut_size, 1.0);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 
 	/* Create a framebuffer at the size of the output. */
 	fb_id = igt_create_fb(data->drm_fd,
@@ -363,7 +363,7 @@ static bool test_pipe_limited_range_ctm(data_t *data,
 	degamma_linear = generate_table(data->degamma_lut_size, 1.0);
 	gamma_linear = generate_table(data->gamma_lut_size, 1.0);
 
-	igt_output_set_pipe(output, primary->pipe->pipe);
+    igt_output_set_pipe(output, primary->pipe->index);
 
 	/* Create a framebuffer at the size of the output. */
 	fb_id0 = igt_create_fb(data->drm_fd,
