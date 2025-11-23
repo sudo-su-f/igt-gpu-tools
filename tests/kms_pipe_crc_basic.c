@@ -128,13 +128,14 @@ enum {
 };
 
 static void test_read_crc(data_t *data, enum pipe pipe,
-			  igt_output_t *output, unsigned flags)
+                          igt_output_t *output, unsigned flags)
 {
-	igt_display_t *display = &data->display;
-	igt_plane_t *primary;
-	drmModeModeInfo *mode;
-	igt_crc_t *crcs = NULL;
-	int c, j;
+        igt_display_t *display = &data->display;
+        int crtc_offset = display->pipes[pipe].crtc_offset;
+        igt_plane_t *primary;
+        drmModeModeInfo *mode;
+        igt_crc_t *crcs = NULL;
+        int c, j;
 
 	igt_display_reset(display);
 
@@ -167,8 +168,9 @@ static void test_read_crc(data_t *data, enum pipe pipe,
 		if (flags & TEST_NONBLOCK) {
 			igt_pipe_crc_t *pipe_crc;
 
-			pipe_crc = igt_pipe_crc_new_nonblock(data->drm_fd, pipe,
-							     IGT_PIPE_CRC_SOURCE_AUTO);
+                        pipe_crc = igt_pipe_crc_new_nonblock(data->drm_fd,
+                                                             crtc_offset,
+                                                             IGT_PIPE_CRC_SOURCE_AUTO);
 			igt_wait_for_vblank(data->drm_fd, display->pipes[pipe].crtc_offset);
 			igt_pipe_crc_start(pipe_crc);
 
@@ -183,8 +185,8 @@ static void test_read_crc(data_t *data, enum pipe pipe,
 		} else {
 			igt_pipe_crc_t *pipe_crc;
 
-			pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
-						    IGT_PIPE_CRC_SOURCE_AUTO);
+                        pipe_crc = igt_pipe_crc_new(data->drm_fd, crtc_offset,
+                                                    IGT_PIPE_CRC_SOURCE_AUTO);
 			igt_pipe_crc_start(pipe_crc);
 
 			n_crcs = igt_pipe_crc_get_crcs(pipe_crc, N_CRCS, &crcs);
@@ -235,12 +237,13 @@ static void test_read_crc(data_t *data, enum pipe pipe,
  *   No CRC mismatch should happen
  */
 static void test_compare_crc(data_t *data, enum pipe pipe, igt_output_t *output,
-			     uint32_t plane_format)
+                             uint32_t plane_format)
 {
-	igt_display_t *display = &data->display;
-	igt_plane_t *primary;
-	drmModeModeInfo *mode;
-	igt_crc_t ref_crc, crc;
+        igt_display_t *display = &data->display;
+        int crtc_offset = display->pipes[pipe].crtc_offset;
+        igt_plane_t *primary;
+        drmModeModeInfo *mode;
+        igt_crc_t ref_crc, crc;
 	igt_pipe_crc_t *pipe_crc = NULL;
 	struct igt_fb fb0, fb1;
 
@@ -268,15 +271,15 @@ static void test_compare_crc(data_t *data, enum pipe pipe, igt_output_t *output,
 	igt_plane_set_fb(primary, &fb0);
 	igt_display_commit(display);
 
-	pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
-				    IGT_PIPE_CRC_SOURCE_AUTO);
+        pipe_crc = igt_pipe_crc_new(data->drm_fd, crtc_offset,
+                                    IGT_PIPE_CRC_SOURCE_AUTO);
 	igt_pipe_crc_collect_crc(pipe_crc, &ref_crc);
 
 	/* Flip FB1 with the primary plane & compare the CRC with ref CRC. */
 	igt_plane_set_fb(primary, &fb1);
 	igt_display_commit(display);
 
-	igt_pipe_crc_collect_crc(pipe_crc, &crc);
+        igt_pipe_crc_collect_crc(pipe_crc, &crc);
 	igt_assert_crc_equal(&crc, &ref_crc);
 
 	/* Clean-up */
@@ -290,16 +293,17 @@ static void test_compare_crc(data_t *data, enum pipe pipe, igt_output_t *output,
 }
 
 static void test_disable_crc_after_crtc(data_t *data, enum pipe pipe,
-					igt_output_t *output)
+                                        igt_output_t *output)
 {
-	igt_display_t *display = &data->display;
-	igt_pipe_crc_t *pipe_crc;
-	drmModeModeInfo *mode;
-	igt_crc_t crc[2];
+        igt_display_t *display = &data->display;
+        int crtc_offset = display->pipes[pipe].crtc_offset;
+        igt_pipe_crc_t *pipe_crc;
+        drmModeModeInfo *mode;
+        igt_crc_t crc[2];
 	igt_plane_t *primary;
 
-	pipe_crc = igt_pipe_crc_new(data->drm_fd, pipe,
-				    IGT_PIPE_CRC_SOURCE_AUTO);
+        pipe_crc = igt_pipe_crc_new(data->drm_fd, crtc_offset,
+                                    IGT_PIPE_CRC_SOURCE_AUTO);
 
 	igt_display_reset(display);
 	igt_output_set_pipe(output, pipe);

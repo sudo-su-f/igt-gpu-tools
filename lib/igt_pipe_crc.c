@@ -183,14 +183,15 @@ char *igt_crc_to_string(igt_crc_t *crc)
 #define MAX_LINE_LEN (10 + 11 * MAX_CRC_ENTRIES + 1)
 
 struct _igt_pipe_crc {
-	int fd;
-	int dir;
-	int ctl_fd;
-	int crc_fd;
-	int flags;
+int fd;
+int dir;
+int ctl_fd;
+int crc_fd;
+int flags;
 
-	enum pipe pipe;
-	char *source;
+enum pipe pipe;
+int crtc_offset;
+char *source;
 };
 
 /**
@@ -215,7 +216,7 @@ void igt_require_pipe_crc(int fd)
 }
 
 static igt_pipe_crc_t *
-pipe_crc_new(int fd, enum pipe pipe, const char *source, int flags)
+pipe_crc_new(int fd, int crtc_offset, const char *source, int flags)
 {
 	igt_pipe_crc_t *pipe_crc;
 	char buf[128];
@@ -235,14 +236,15 @@ pipe_crc_new(int fd, enum pipe pipe, const char *source, int flags)
 	pipe_crc = calloc(1, sizeof(struct _igt_pipe_crc));
 	igt_assert(pipe_crc);
 
-	sprintf(buf, "crtc-%d/crc/control", pipe);
+	sprintf(buf, "crtc-%d/crc/control", crtc_offset);
 	pipe_crc->ctl_fd = openat(debugfs, buf, O_WRONLY);
 	igt_assert(pipe_crc->ctl_fd != -1);
 
 	pipe_crc->crc_fd = -1;
 	pipe_crc->fd = fd;
 	pipe_crc->dir = debugfs;
-	pipe_crc->pipe = pipe;
+	pipe_crc->pipe = PIPE_NONE;
+	pipe_crc->crtc_offset = crtc_offset;
 	pipe_crc->source = strdup(env_source);
 	igt_assert(pipe_crc->source);
 	pipe_crc->flags = flags;
@@ -253,39 +255,42 @@ pipe_crc_new(int fd, enum pipe pipe, const char *source, int flags)
 /**
  * igt_pipe_crc_new:
  * @fd: fd of the device
- * @pipe: display pipe to use as source
+ * @crtc_offset: display CRTC index to use as source
  * @source: CRC tap point to use as source
  *
- * This sets up a new pipe CRC capture object for the given @pipe and @source
+ * This sets up a new pipe CRC capture object for the given @crtc_offset and
+ * @source
  * in blocking mode.
  *
- * Returns: A pipe CRC object for the given @pipe and @source. The library
+ * Returns: A pipe CRC object for the given @crtc_offset and @source. The
+ * library
  * assumes that the source is always available since recent kernels support at
  * least IGT_PIPE_CRC_SOURCE_AUTO everywhere.
  */
 igt_pipe_crc_t *
-igt_pipe_crc_new(int fd, enum pipe pipe, const char *source)
+igt_pipe_crc_new(int fd, int crtc_offset, const char *source)
 {
-	return pipe_crc_new(fd, pipe, source, O_RDONLY);
+	return pipe_crc_new(fd, crtc_offset, source, O_RDONLY);
 }
 
 /**
  * igt_pipe_crc_new_nonblock:
  * @fd: fd of the device
- * @pipe: display pipe to use as source
+ * @crtc_offset: display CRTC index to use as source
  * @source: CRC tap point to use as source
  *
- * This sets up a new pipe CRC capture object for the given @pipe and @source
- * in nonblocking mode.
+ * This sets up a new pipe CRC capture object for the given @crtc_offset and
+ * @source in nonblocking mode.
  *
- * Returns: A pipe CRC object for the given @pipe and @source. The library
+ * Returns: A pipe CRC object for the given @crtc_offset and @source. The
+ * library
  * assumes that the source is always available since recent kernels support at
  * least IGT_PIPE_CRC_SOURCE_AUTO everywhere.
  */
 igt_pipe_crc_t *
-igt_pipe_crc_new_nonblock(int fd, enum pipe pipe, const char *source)
+igt_pipe_crc_new_nonblock(int fd, int crtc_offset, const char *source)
 {
-	return pipe_crc_new(fd, pipe, source, O_RDONLY | O_NONBLOCK);
+	return pipe_crc_new(fd, crtc_offset, source, O_RDONLY | O_NONBLOCK);
 }
 
 /**
@@ -380,7 +385,7 @@ void igt_pipe_crc_start(igt_pipe_crc_t *pipe_crc)
 
 	igt_assert_eq(write(pipe_crc->ctl_fd, src, strlen(src)), strlen(src));
 
-	sprintf(buf, "crtc-%d/crc/data", pipe_crc->pipe);
+	sprintf(buf, "crtc-%d/crc/data", pipe_crc->crtc_offset);
 
 	igt_set_timeout(10, "Opening crc fd, and poll for first CRC.");
 	pipe_crc->crc_fd = openat(pipe_crc->dir, buf, pipe_crc->flags);
@@ -560,7 +565,8 @@ igt_pipe_crc_get_for_frame(int drm_fd, igt_pipe_crc_t *pipe_crc,
 void
 igt_pipe_crc_get_current(int drm_fd, igt_pipe_crc_t *pipe_crc, igt_crc_t *crc)
 {
-	unsigned vblank = kmstest_get_vblank(drm_fd, pipe_crc->pipe, 0) + 1;
+	unsigned vblank =
+		kmstest_get_vblank(drm_fd, pipe_crc->crtc_offset, 0) + 1;
 
 	return igt_pipe_crc_get_for_frame(drm_fd, pipe_crc, vblank, crc);
 }
