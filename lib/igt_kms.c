@@ -2753,7 +2753,7 @@ void igt_require_pipe(igt_display_t *display, enum pipe pipe)
 static int
 __get_crtc_mask_for_pipe(drmModeRes *resources, igt_pipe_t *pipe)
 {
-        return 1 << pipe->crtc_index;
+	return 1 << pipe->crtc_index;
 }
 
 static bool igt_pipe_has_valid_output(igt_display_t *display, enum pipe pipe)
@@ -2968,38 +2968,39 @@ void igt_display_require(igt_display_t *display, int drm_fd)
 	}
 #endif
 
-        igt_require_f(resources->count_crtcs <= IGT_MAX_PIPES,
-                     "count_crtcs exceeds IGT_MAX_PIPES, resources->count_crtcs=%d, IGT_MAX_PIPES=%d\n",
-                     resources->count_crtcs, IGT_MAX_PIPES);
+	igt_require_f(resources->count_crtcs <= IGT_MAX_PIPES,
+		     "count_crtcs exceeds IGT_MAX_PIPES, resources->count_crtcs=%d, IGT_MAX_PIPES=%d\n",
+		     resources->count_crtcs, IGT_MAX_PIPES);
 
-        display->n_pipes = resources->count_crtcs;
-        display->pipes = calloc(display->n_pipes, sizeof(igt_pipe_t));
-        igt_assert_f(display->pipes, "Failed to allocate memory for %d pipes\n", display->n_pipes);
+	display->n_pipes = resources->count_crtcs;
+	display->pipes = calloc(display->n_pipes, sizeof(igt_pipe_t));
+	igt_assert_f(display->pipes, "Failed to allocate memory for %d pipes\n",
+		    display->n_pipes);
 
-        for (i = 0; i < resources->count_crtcs; i++) {
-                igt_pipe_t *pipe = &display->pipes[i];
-                enum pipe hw_pipe = PIPE_NONE;
+	for (i = 0; i < resources->count_crtcs; i++) {
+		igt_pipe_t *pipe = &display->pipes[i];
+		enum pipe hw_pipe = PIPE_NONE;
 
-                pipe->index = i;
-                pipe->valid = true;
-                pipe->crtc_id = resources->crtcs[i];
-                pipe->crtc_index = i;
-                pipe->crtc_offset = i;
+		pipe->index = i;
+		pipe->valid = true;
+		pipe->crtc_id = resources->crtcs[i];
+		pipe->crtc_index = i;
+		pipe->crtc_offset = i;
 
-                if (is_intel_dev) {
-                        hw_pipe = __intel_get_pipe_from_crtc_id(drm_fd,
-                                                               pipe->crtc_id, i);
-                        pipe->hw_pipe = hw_pipe;
-                        pipe->hw_pipe_valid = true;
-                        pipe->hw_pipe_mask = BIT(hw_pipe);
-                } else {
-                        pipe->hw_pipe = PIPE_NONE;
-                        pipe->hw_pipe_valid = false;
-                        pipe->hw_pipe_mask = 0;
-                }
+		if (is_intel_dev) {
+			hw_pipe = __intel_get_pipe_from_crtc_id(drm_fd,
+				       pipe->crtc_id, i);
+			pipe->hw_pipe = hw_pipe;
+			pipe->hw_pipe_valid = true;
+			pipe->hw_pipe_mask = BIT(hw_pipe);
+		} else {
+			pipe->hw_pipe = PIPE_NONE;
+			pipe->hw_pipe_valid = false;
+			pipe->hw_pipe_mask = 0;
+		}
 
-                pipe->pipe = pipe->hw_pipe_valid ? pipe->hw_pipe : PIPE_NONE;
-        }
+		pipe->pipe = pipe->index;
+	}
 
 	drmSetClientCap(drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 
@@ -5489,20 +5490,20 @@ static int __igt_vblank_wait(int drm_fd, int crtc_offset, int count)
 
 igt_pipe_t *igt_get_pipe(igt_display_t *display, int index)
 {
-        igt_assert(index >= 0 && index < display->n_pipes);
-        igt_assert(display->pipes[index].valid);
+	igt_assert(index >= 0 && index < display->n_pipes);
+	igt_assert(display->pipes[index].valid);
 
-        return &display->pipes[index];
+	return &display->pipes[index];
 }
 
 uint32_t igt_pipe_get_crtc_id(igt_display_t *display, int index)
 {
-        return igt_get_pipe(display, index)->crtc_id;
+	return igt_get_pipe(display, index)->crtc_id;
 }
 
 int igt_pipe_get_crtc_index(igt_display_t *display, int index)
 {
-        return igt_get_pipe(display, index)->crtc_index;
+	return igt_get_pipe(display, index)->crtc_index;
 }
 
 /**
@@ -5524,14 +5525,14 @@ int igt_pipe_get_crtc_index(igt_display_t *display, int index)
  */
 void igt_wait_for_vblank_count(int drm_fd, int crtc_offset, int count)
 {
-        igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, count) == 0);
+	igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, count) == 0);
 }
 
 int igt_wait_vblank_count_on_pipe(igt_display_t *display, int pipe_index, int count)
 {
-        return __igt_vblank_wait(display->drm_fd,
-                                 igt_pipe_get_crtc_index(display, pipe_index),
-                                 count);
+	return __igt_vblank_wait(display->drm_fd,
+			igt_pipe_get_crtc_index(display, pipe_index),
+			count);
 }
 
 /**
@@ -5545,14 +5546,14 @@ int igt_wait_vblank_count_on_pipe(igt_display_t *display, int pipe_index, int co
  */
 void igt_wait_for_vblank(int drm_fd, int crtc_offset)
 {
-        igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, 1) == 0);
+	igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, 1) == 0);
 }
 
 int igt_wait_vblank_on_pipe(igt_display_t *display, int pipe_index)
 {
-        return __igt_vblank_wait(display->drm_fd,
-                                 igt_pipe_get_crtc_index(display, pipe_index),
-                                 1);
+	return __igt_vblank_wait(display->drm_fd,
+			igt_pipe_get_crtc_index(display, pipe_index),
+			1);
 }
 
 /**
