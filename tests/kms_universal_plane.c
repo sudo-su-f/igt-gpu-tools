@@ -711,7 +711,8 @@ cursor_leak_test_pipe(data_t *data, enum pipe pipe, igt_output_t *output)
 	 * framebuffer.
 	 */
 	if (is_xe_device(data->drm_fd))
-		igt_wait_for_vblank_count(data->drm_fd, data->display.pipes[pipe].crtc_offset, 2);
+            igt_wait_for_vblank_count(data->drm_fd,
+                                      igt_pipe_get_crtc_index(&data->display, pipe), 2);
 
 	/* We should be back to the same framebuffer count as when we started */
 	count2 = intel_gem_fb_count(data);

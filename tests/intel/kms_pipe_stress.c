@@ -315,26 +315,16 @@ static void *gpu_load(void *ptr)
 	return NULL;
 }
 
-static inline uint32_t pipe_select(enum pipe pipe)
+static unsigned get_vblank(struct data *data, enum pipe pipe, unsigned flags)
 {
-	if (pipe > 1)
-		return pipe << DRM_VBLANK_HIGH_CRTC_SHIFT;
-	else if (pipe > 0)
-		return DRM_VBLANK_SECONDARY;
-	else
-		return 0;
-}
+        drmVBlank vbl = {
+                .request.type = DRM_VBLANK_RELATIVE | flags,
+        };
 
-static unsigned get_vblank(int fd, enum pipe pipe, unsigned flags)
-{
-	union drm_wait_vblank vbl;
+        if (igt_wait_vblank_on_pipe_with_reply(&data->display, pipe, &vbl))
+                return 0;
 
-	memset(&vbl, 0, sizeof(vbl));
-	vbl.request.type = DRM_VBLANK_RELATIVE | pipe_select(pipe) | flags;
-	if (drmIoctl(fd, DRM_IOCTL_WAIT_VBLANK, &vbl))
-		return 0;
-
-	return vbl.reply.sequence;
+        return vbl.reply.sequence;
 }
 
 static int commit_mode(struct data *data, igt_output_t *output,
@@ -599,8 +589,7 @@ static void stress_pipes(struct data *data, struct timespec *start,
 
 		igt_pipe_crc_start(data->pipe_crc[pipe]);
 		igt_pipe_crc_get_current(data->display.drm_fd, data->pipe_crc[pipe], &crc);
-		get_vblank(data->display.drm_fd, pipe,
-			   DRM_VBLANK_NEXTONMISS);
+                get_vblank(data, pipe, DRM_VBLANK_NEXTONMISS);
 		igt_pipe_crc_get_current(data->display.drm_fd, data->pipe_crc[pipe], &crc2);
 		igt_pipe_crc_stop(data->pipe_crc[pipe]);
 		igt_assert_crc_equal(&crc, &crc2);

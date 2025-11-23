@@ -970,34 +970,26 @@ static uint32_t set_fb_on_crtc(int fd, int pipe, struct vgem_bo *bo, uint32_t fb
 	return 0;
 }
 
-static inline uint32_t pipe_select(int pipe)
+static unsigned get_vblank(igt_display_t *display, int pipe, unsigned flags)
 {
-	if (pipe > 1)
-		return pipe << DRM_VBLANK_HIGH_CRTC_SHIFT;
-	else if (pipe > 0)
-		return DRM_VBLANK_SECONDARY;
-	else
-		return 0;
-}
+        drmVBlank vbl = {
+                .request.type = DRM_VBLANK_RELATIVE | flags,
+        };
 
-static unsigned get_vblank(int fd, int pipe, unsigned flags)
-{
-	union drm_wait_vblank vbl;
+        if (igt_wait_vblank_on_pipe_with_reply(display, pipe, &vbl))
+                return 0;
 
-	memset(&vbl, 0, sizeof(vbl));
-	vbl.request.type = DRM_VBLANK_RELATIVE | pipe_select(pipe) | flags;
-	if (drmIoctl(fd, DRM_IOCTL_WAIT_VBLANK, &vbl))
-		return 0;
-
-	return vbl.reply.sequence;
+        return vbl.reply.sequence;
 }
 
 static void flip_to_vgem(int i915, int vgem,
-			 struct vgem_bo *bo,
-			 uint32_t fb_id,
-			 uint32_t crtc_id,
-			 unsigned hang,
-			 const char *name)
+                         struct vgem_bo *bo,
+                         uint32_t fb_id,
+                         uint32_t crtc_id,
+                         unsigned hang,
+                         const char *name,
+                         igt_display_t *display,
+                         enum pipe pipe)
 {
 	struct pollfd pfd = { i915, POLLIN };
 	struct drm_event_vblank vbl;
@@ -1007,31 +999,31 @@ static void flip_to_vgem(int i915, int vgem,
 
 	igt_fork(child, 1) { /* Use a child in case we block uninterruptibly */
 		/* Check we don't block nor flip before the fence is ready */
-		do_or_die(drmModePageFlip(i915, crtc_id, fb_id,
-					  DRM_MODE_PAGE_FLIP_EVENT, &fb_id));
-		for (int n = 0; n < 5; n++) { /* 5 frames should be <100ms */
-			igt_assert_f(poll(&pfd, 1, 0) == 0,
-				     "flip to %s completed whilst busy\n",
-				     name);
-			get_vblank(i915, 0, DRM_VBLANK_NEXTONMISS);
-		}
-	}
-	igt_waitchildren_timeout(2, "flip blocked by waiting for busy vgem fence");
+                do_or_die(drmModePageFlip(i915, crtc_id, fb_id,
+                                          DRM_MODE_PAGE_FLIP_EVENT, &fb_id));
+                for (int n = 0; n < 5; n++) { /* 5 frames should be <100ms */
+                        igt_assert_f(poll(&pfd, 1, 0) == 0,
+                                     "flip to %s completed whilst busy\n",
+                                     name);
+                        get_vblank(display, pipe, DRM_VBLANK_NEXTONMISS);
+                }
+        }
+        igt_waitchildren_timeout(2, "flip blocked by waiting for busy vgem fence");
 
 	/* And then the flip is completed as soon as it is ready */
-	if (!hang) {
-		unsigned long miss;
+        if (!hang) {
+                unsigned long miss;
 
-		/* Signal fence at the start of the next vblank */
-		get_vblank(i915, 0, DRM_VBLANK_NEXTONMISS);
-		vgem_fence_signal(vgem, fence);
+                /* Signal fence at the start of the next vblank */
+                get_vblank(display, pipe, DRM_VBLANK_NEXTONMISS);
+                vgem_fence_signal(vgem, fence);
 
-		miss = 0;
-		igt_until_timeout(5) {
-			get_vblank(i915, 0, DRM_VBLANK_NEXTONMISS);
-			if (poll(&pfd, 1, 0))
-				break;
-			miss++;
+                miss = 0;
+                igt_until_timeout(5) {
+                        get_vblank(display, pipe, DRM_VBLANK_NEXTONMISS);
+                        if (poll(&pfd, 1, 0))
+                                break;
+                        miss++;
 		}
 		if (miss > 1) {
 			igt_warn("Missed %lu vblanks after signaling before flip was completed\n",
@@ -1042,8 +1034,8 @@ static void flip_to_vgem(int i915, int vgem,
 
 	/* Even if hung, the flip must complete *eventually* */
 	igt_set_timeout(20, "flip blocked by hanging vgem fence"); /* XXX lower fail threshold? */
-	igt_assert_eq(read(i915, &vbl, sizeof(vbl)), sizeof(vbl));
-	igt_reset_timeout();
+        igt_assert_eq(read(i915, &vbl, sizeof(vbl)), sizeof(vbl));
+        igt_reset_timeout();
 }
 
 static void test_flip(int i915, int vgem, unsigned hang)
@@ -1092,7 +1084,7 @@ static void test_flip(int i915, int vgem, unsigned hang)
 		igt_assert(fb_id[i]);
 	}
 
-	igt_require((crtc_id = set_fb_on_crtc(i915, 0, &bo[0], fb_id[0])));
+        igt_require((crtc_id = set_fb_on_crtc(i915, pipe, &bo[0], fb_id[0])));
 
 	/* Bind both fb for use by flipping */
 	for (int i = 1; i >= 0; i--) {
@@ -1104,10 +1096,12 @@ static void test_flip(int i915, int vgem, unsigned hang)
 	}
 
 	/* Schedule a flip to wait upon the frontbuffer vgem being written */
-	flip_to_vgem(i915, vgem, &bo[0], fb_id[0], crtc_id, hang, "front");
+        flip_to_vgem(i915, vgem, &bo[0], fb_id[0], crtc_id, hang, "front",
+                     &display, pipe);
 
-	/* Schedule a flip to wait upon the backbuffer vgem being written */
-	flip_to_vgem(i915, vgem, &bo[1], fb_id[1], crtc_id, hang, "back");
+        /* Schedule a flip to wait upon the backbuffer vgem being written */
+        flip_to_vgem(i915, vgem, &bo[1], fb_id[1], crtc_id, hang, "back",
+                     &display, pipe);
 
 	for (int i = 0; i < 2; i++) {
 		do_or_die(drmModeRmFB(i915, fb_id[i]));

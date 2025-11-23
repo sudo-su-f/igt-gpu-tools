@@ -2990,14 +2990,16 @@ void igt_display_require(igt_display_t *display, int drm_fd)
 			__intel_get_pipe_from_crtc_id(drm_fd,
 						      resources->crtcs[i], i) : i;
 
-		pipe = &display->pipes[pipe_enum];
-		pipe->pipe = pipe_enum;
+                pipe = &display->pipes[pipe_enum];
+                pipe->pipe = pipe_enum;
+                pipe->index = pipe_enum;
 
-		pipe->valid = true;
-		pipe->crtc_id = resources->crtcs[i];
-		/* offset of a pipe in crtcs list */
-		pipe->crtc_offset = i;
-	}
+                pipe->valid = true;
+                pipe->crtc_id = resources->crtcs[i];
+                pipe->crtc_index = i;
+                /* offset of a pipe in crtcs list */
+                pipe->crtc_offset = i;
+        }
 
 	drmSetClientCap(drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 
@@ -3155,7 +3157,30 @@ out:
  */
 int igt_display_get_n_pipes(igt_display_t *display)
 {
-	return display->n_pipes;
+        return display->n_pipes;
+}
+
+igt_pipe_t *igt_get_pipe(igt_display_t *display, int index)
+{
+        igt_pipe_t *pipe;
+
+        igt_assert(index >= 0 && index < display->n_pipes);
+
+        pipe = &display->pipes[index];
+
+        igt_assert(pipe->valid);
+
+        return pipe;
+}
+
+uint32_t igt_pipe_get_crtc_id(igt_display_t *display, int index)
+{
+        return igt_get_pipe(display, index)->crtc_id;
+}
+
+int igt_pipe_get_crtc_index(igt_display_t *display, int index)
+{
+        return igt_get_pipe(display, index)->crtc_index;
 }
 
 /**
@@ -5518,7 +5543,43 @@ void igt_wait_for_vblank_count(int drm_fd, int crtc_offset, int count)
  */
 void igt_wait_for_vblank(int drm_fd, int crtc_offset)
 {
-	igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, 1) == 0);
+        igt_assert(__igt_vblank_wait(drm_fd, crtc_offset, 1) == 0);
+}
+
+int igt_wait_vblank_on_pipe_with_reply(igt_display_t *display, int pipe_index,
+                                      drmVBlank *reply)
+{
+        drmVBlank wait_vbl;
+        uint32_t pipe_id_flag;
+        int ret;
+
+        if (reply)
+                wait_vbl = *reply;
+        else
+                memset(&wait_vbl, 0, sizeof(wait_vbl));
+
+        if (!wait_vbl.request.type)
+                wait_vbl.request.type = DRM_VBLANK_RELATIVE;
+        if (!reply && !wait_vbl.request.sequence)
+                wait_vbl.request.sequence = 1;
+
+        pipe_id_flag = kmstest_get_vbl_flag(igt_pipe_get_crtc_index(display, pipe_index));
+
+        wait_vbl.request.type |= pipe_id_flag;
+
+        ret = drmIoctl(display->drm_fd, DRM_IOCTL_WAIT_VBLANK, &wait_vbl);
+        if (ret == -1)
+                ret = -errno;
+
+        if (!ret && reply)
+                *reply = wait_vbl;
+
+        return ret;
+}
+
+int igt_wait_vblank_on_pipe(igt_display_t *display, int pipe_index)
+{
+        return igt_wait_vblank_on_pipe_with_reply(display, pipe_index, NULL);
 }
 
 /**

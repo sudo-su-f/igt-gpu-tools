@@ -788,14 +788,13 @@ restart_round:
 			 */
 			igt_display_commit2(&data->display, COMMIT_UNIVERSAL);
 
-			/* setplane for the cursor does not block */
-			if (plane->type == DRM_PLANE_TYPE_CURSOR) {
-				igt_display_t *display = &data->display;
+                        /* setplane for the cursor does not block */
+                        if (plane->type == DRM_PLANE_TYPE_CURSOR) {
+                                igt_display_t *display = &data->display;
 
-				igt_wait_for_vblank(data->drm_fd,
-						display->pipes[pipe].crtc_offset);
-			}
-		}
+                                igt_assert_eq(igt_wait_vblank_on_pipe(display, pipe), 0);
+                        }
+                }
 
 		igt_remove_fb(data->drm_fd, &old_fb);
 	}
