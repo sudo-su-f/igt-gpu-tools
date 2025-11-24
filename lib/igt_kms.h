@@ -448,15 +448,20 @@ typedef struct igt_plane {
 } igt_plane_t;
 
 /*
- * This struct represents a hardware pipe
+ * This struct represents a logical KMS pipe / CRTC. The long-term goal is to
+ * treat logical pipes as the primary concept across IGT APIs and tests. The
+ * underlying hardware pipe (PIPE_A/B/C/...) becomes secondary metadata attached
+ * to the logical pipe instead of driving indexing or enumeration directly.
  *
  * DRM_IOCTL_WAIT_VBLANK notion of pipe is confusing and we are using
  * crtc_offset instead (refer people to #igt_wait_for_vblank_count)
  */
 struct igt_pipe {
-	igt_display_t *display;
-	/* ID of a hardware pipe */
-	enum pipe pipe;
+        igt_display_t *display;
+        /* Logical pipe index inside display->pipes */
+        int index;
+        /* ID of a hardware pipe */
+        enum pipe pipe;
 
         /*
          * Indicates whether this pipe struct is valid and can be used. This can
@@ -473,14 +478,22 @@ struct igt_pipe {
 	int plane_primary;
 	igt_plane_t *planes;
 
-	uint64_t changed;
-	uint32_t props[IGT_NUM_CRTC_PROPS];
-	uint64_t values[IGT_NUM_CRTC_PROPS];
+        uint64_t changed;
+        uint32_t props[IGT_NUM_CRTC_PROPS];
+        uint64_t values[IGT_NUM_CRTC_PROPS];
 
-	/* ID of KMS CRTC object */
-	uint32_t crtc_id;
-	/* offset of a pipe in drmModeRes.crtcs */
-	uint32_t crtc_offset;
+        /* ID of KMS CRTC object */
+        uint32_t crtc_id;
+        /* logical CRTC index within the resources enumeration */
+        uint32_t crtc_index;
+
+        /* Hardware pipe metadata */
+        enum pipe hw_pipe;
+        bool hw_pipe_valid;
+        uint32_t hw_pipe_mask;
+
+        /* offset of a pipe in drmModeRes.crtcs */
+        uint32_t crtc_offset;
 
 	int32_t out_fence_fd;
 };
@@ -552,6 +565,9 @@ void igt_display_commit_atomic(igt_display_t *display, uint32_t flags, void *use
 int  igt_display_try_commit2(igt_display_t *display, enum igt_commit_style s);
 int  igt_display_drop_events(igt_display_t *display);
 int  igt_display_get_n_pipes(igt_display_t *display);
+igt_pipe_t *igt_get_pipe(igt_display_t *display, int index);
+uint32_t igt_pipe_get_crtc_id(igt_display_t *display, int index);
+int igt_pipe_get_crtc_index(igt_display_t *display, int index);
 void igt_display_require_output(igt_display_t *display);
 void igt_display_require_output_on_pipe(igt_display_t *display, enum pipe pipe);
 
@@ -611,6 +627,9 @@ const char *igt_plane_rotation_name(igt_rotation_t rotation);
 
 void igt_wait_for_vblank(int drm_fd, int crtc_offset);
 void igt_wait_for_vblank_count(int drm_fd, int crtc_offset, int count);
+int igt_wait_vblank_on_pipe_with_reply(igt_display_t *display, int pipe_index,
+                                      drmVBlank *reply);
+int igt_wait_vblank_on_pipe(igt_display_t *display, int pipe_index);
 
 /**
  * igt_output_is_connected:

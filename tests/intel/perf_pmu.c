@@ -1083,15 +1083,10 @@ static void cleanup_crtc(data_t *data, int fd, igt_output_t *output)
 	igt_display_commit(display);
 }
 
-static int wait_vblank(int fd, union drm_wait_vblank *vbl)
+static int wait_vblank(data_t *data, union drm_wait_vblank *vbl)
 {
-	int err;
-
-	err = 0;
-	if (igt_ioctl(fd, DRM_IOCTL_WAIT_VBLANK, vbl))
-		err = -errno;
-
-	return err;
+        return igt_wait_vblank_on_pipe_with_reply(&data->display, data->pipe,
+                                                 (drmVBlank *)vbl);
 }
 
 static int has_secure_batches(const int fd)
@@ -1200,19 +1195,15 @@ event_wait(int gem_fd, const intel_ctx_t *ctx,
 
 		val[0] = pmu_read_single(fd);
 
-		igt_fork_helper(&waiter) {
-			const uint32_t pipe_id_flag =
-					kmstest_get_vbl_flag(data.pipe);
+                igt_fork_helper(&waiter) {
+                        for (;;) {
+                                union drm_wait_vblank vbl = { };
 
-			for (;;) {
-				union drm_wait_vblank vbl = { };
-
-				vbl.request.type = _DRM_VBLANK_RELATIVE;
-				vbl.request.type |= pipe_id_flag;
-				vbl.request.sequence = 1;
-				igt_assert_eq(wait_vblank(gem_fd, &vbl), 0);
-			}
-		}
+                                vbl.request.type = _DRM_VBLANK_RELATIVE;
+                                vbl.request.sequence = 1;
+                                igt_assert_eq(wait_vblank(&data, &vbl), 0);
+                        }
+                }
 
 		for (unsigned int frame = 0; frame < frames; frame++) {
 			gem_execbuf(gem_fd, &eb);
