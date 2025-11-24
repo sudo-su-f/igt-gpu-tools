@@ -174,12 +174,12 @@ static int prepare_crtc(data_t *data, bool is_master)
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, &lease->primary_fb);
 
-	ret = igt_display_try_commit2(display, COMMIT_LEGACY);
+        ret = igt_display_try_commit2(display, COMMIT_LEGACY);
 
-	if (ret)
-		return ret;
+        if (ret)
+                return ret;
 
-	igt_wait_for_vblank(lease->fd, display->pipes[pipe].crtc_offset);
+        igt_wait_vblank_on_pipe(display, pipe);
 
 	lease->output = output;
 	lease->mode = mode;
@@ -370,25 +370,23 @@ static void page_flip_implicit_plane(data_t *data)
 	igt_assert_eq(0, prepare_crtc(data, true));
 
 	/* sanity check */
-	do_or_die(drmModePageFlip(data->master.fd, data->crtc_id,
-			      data->master.primary_fb.fb_id,
-			      0, NULL));
+        do_or_die(drmModePageFlip(data->master.fd, data->crtc_id,
+                              data->master.primary_fb.fb_id,
+                              0, NULL));
 
-	display = &data->master.display;
+        display = &data->master.display;
 
-	igt_wait_for_vblank(data->master.fd,
-			display->pipes[pipe].crtc_offset);
+        igt_wait_vblank_on_pipe(display, pipe);
 
 	do_or_die(drmModePageFlip(data->lease.fd, data->crtc_id,
 			      data->master.primary_fb.fb_id,
 			      0, NULL));
 	close(data->lease.fd);
 
-	object_ids[mcl.object_count++] = wrong_plane_id;
-	do_or_die(create_lease(data->master.fd, &mcl, &data->lease.fd));
+        object_ids[mcl.object_count++] = wrong_plane_id;
+        do_or_die(create_lease(data->master.fd, &mcl, &data->lease.fd));
 
-	igt_wait_for_vblank(data->master.fd,
-			display->pipes[pipe].crtc_offset);
+        igt_wait_vblank_on_pipe(display, pipe);
 
 	igt_assert_eq(drmModePageFlip(data->lease.fd, data->crtc_id,
 				      data->master.primary_fb.fb_id,

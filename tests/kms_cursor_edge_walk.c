@@ -123,11 +123,10 @@ static void cursor_move(data_t *data, int x, int y, int i)
 	 * would straddle the left screen edge (which is when the hw
 	 * fails). So let's accept a failure from the ioctl in that case.
 	 */
-	igt_assert(drmModeMoveCursor(data->drm_fd, crtc_id, x, y) == 0 ||
-		   (IS_CHERRYVIEW(data->devid) && data->pipe == PIPE_C &&
-		    x < 0 && x > -data->curw));
-	igt_wait_for_vblank(data->drm_fd,
-			display->pipes[data->pipe].crtc_offset);
+        igt_assert(drmModeMoveCursor(data->drm_fd, crtc_id, x, y) == 0 ||
+                   (IS_CHERRYVIEW(data->devid) && data->pipe == PIPE_C &&
+                    x < 0 && x > -data->curw));
+        igt_wait_vblank_on_pipe(display, data->pipe);
 }
 
 #define XSTEP 8

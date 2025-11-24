@@ -159,18 +159,16 @@ run_primary_test(data_t *data, enum pipe pipe, igt_output_t *output)
 	igt_plane_set_fb(primary, fb);
 
 	for (i = 0; i < 4; i++) {
-		igt_display_commit2(&data->display, COMMIT_ATOMIC);
+                igt_display_commit2(&data->display, COMMIT_ATOMIC);
 
-		if (!(i & 1))
-			igt_wait_for_vblank(data->drm_fd,
-					data->display.pipes[pipe].crtc_offset);
+                if (!(i & 1))
+                        igt_wait_vblank_on_pipe(&data->display, pipe);
 
-		igt_plane_set_fb(primary, (i & 1) ? fb : NULL);
-		igt_display_commit2(&data->display, COMMIT_ATOMIC);
+                igt_plane_set_fb(primary, (i & 1) ? fb : NULL);
+                igt_display_commit2(&data->display, COMMIT_ATOMIC);
 
-		if (i & 1)
-			igt_wait_for_vblank(data->drm_fd,
-					data->display.pipes[pipe].crtc_offset);
+                if (i & 1)
+                        igt_wait_vblank_on_pipe(&data->display, pipe);
 
 		igt_plane_set_fb(primary, (i & 1) ? NULL : fb);
 	}

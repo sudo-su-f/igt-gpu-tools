@@ -165,16 +165,15 @@ static void test_read_crc(data_t *data, enum pipe pipe,
 
 		/* wait for N_CRCS vblanks and the corresponding N_CRCS CRCs */
 		if (flags & TEST_NONBLOCK) {
-			igt_pipe_crc_t *pipe_crc;
+                        igt_pipe_crc_t *pipe_crc;
 
-			pipe_crc = igt_pipe_crc_new_nonblock(data->drm_fd, pipe,
-							     IGT_PIPE_CRC_SOURCE_AUTO);
-			igt_wait_for_vblank(data->drm_fd, display->pipes[pipe].crtc_offset);
-			igt_pipe_crc_start(pipe_crc);
+                        pipe_crc = igt_pipe_crc_new_nonblock(data->drm_fd, pipe,
+                                                             IGT_PIPE_CRC_SOURCE_AUTO);
+                        igt_wait_vblank_on_pipe(display, pipe);
+                        igt_pipe_crc_start(pipe_crc);
 
-			igt_wait_for_vblank_count(data->drm_fd,
-					display->pipes[pipe].crtc_offset, N_CRCS);
-			n_crcs = igt_pipe_crc_get_crcs(pipe_crc, N_CRCS+1, &crcs);
+                        igt_wait_vblank_count_on_pipe(display, pipe, N_CRCS);
+                        n_crcs = igt_pipe_crc_get_crcs(pipe_crc, N_CRCS+1, &crcs);
 			igt_pipe_crc_stop(pipe_crc);
 			igt_pipe_crc_free(pipe_crc);
 
