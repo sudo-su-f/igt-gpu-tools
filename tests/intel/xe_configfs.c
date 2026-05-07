@@ -55,6 +55,7 @@ static void restore(int sig)
 {
 	int configfs_fd;
 
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	/* Drop all custom configfs settings from subtests */
@@ -69,6 +70,7 @@ static void restore(int sig)
 
 static void set_survivability_mode(int configfs_device_fd, bool value)
 {
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 	igt_sysfs_set_boolean(configfs_device_fd, "survivability_mode", value);
 	igt_kmod_bind("xe", bus_addr);
@@ -113,6 +115,7 @@ static void test_engines_allowed_invalid(int configfs_device_fd)
 	 * These only test if engine parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -139,6 +142,7 @@ static void test_engines_allowed(int configfs_device_fd)
 	 * These only test if engine parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -169,6 +173,7 @@ static void test_gt_types_allowed(int configfs_device_fd)
 	 * These only test if gt type parsing is correct, so just make sure
 	 * there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -220,17 +225,22 @@ static void test_ctx_restore_invalid(int configfs_device_fd, const char *type)
 		{ .test = "invalid-engine-instance",
 		  .in = "rcs0 reg 4F100 DEADBEEF",
 		},
+		{ .test = "invalid-second-command",
+		  .in = "rcs cmd 11000001 4F100 DEADBEEF\n"
+			"rcs cmd 11000001 4F10G DEADBEEF",
+		},
 	};
 	char buf[4096] = { };
 	char file[64] = { };
 
 	snprintf(file, sizeof(file), "ctx_restore_%s_bb", type);
-	igt_sysfs_set(configfs_device_fd, "ctx_restore_post_bb", "");
+	igt_sysfs_set(configfs_device_fd, file, "");
 
 	/*
 	 * These only test if command parsing is correct,
 	 * so just make sure there's no device bound
 	 */
+	igt_audio_driver_unload(NULL);
 	igt_kmod_unbind("xe", bus_addr);
 
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
@@ -310,6 +320,7 @@ static void test_ctx_restore(int configfs_device_fd, const char *type)
 	for (size_t i = 0; i < ARRAY_SIZE(values); i++) {
 		const struct value *v = &values[i];
 
+		igt_audio_driver_unload(NULL);
 		igt_kmod_unbind("xe", bus_addr);
 
 		igt_info("Test %s\n", v->test);
@@ -402,6 +413,7 @@ int igt_main()
 
 	igt_describe("Validate ctx_restore_post_bb with invalid options");
 	igt_subtest("ctx-restore-post-bb-invalid") {
+		igt_skip_on_f(is_vf_device, "MMIO register readback not possible on VF\n");
 		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore_invalid(configfs_device_fd, "post");
 		close_configfs_group(configfs_fd, configfs_device_fd);
@@ -409,6 +421,7 @@ int igt_main()
 
 	igt_describe("Validate ctx_restore_post_bb");
 	igt_subtest("ctx-restore-post-bb") {
+		igt_skip_on_f(is_vf_device, "MMIO register readback not possible on VF\n");
 		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore(configfs_device_fd, "post");
 		close_configfs_group(configfs_fd, configfs_device_fd);
@@ -416,6 +429,7 @@ int igt_main()
 
 	igt_describe("Validate ctx_restore_mid_bb with invalid options");
 	igt_subtest("ctx-restore-mid-bb-invalid") {
+		igt_skip_on_f(is_vf_device, "MMIO register readback not possible on VF\n");
 		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore_invalid(configfs_device_fd, "mid");
 		close_configfs_group(configfs_fd, configfs_device_fd);
@@ -423,6 +437,7 @@ int igt_main()
 
 	igt_describe("Validate ctx_restore_mid_bb");
 	igt_subtest("ctx-restore-mid-bb") {
+		igt_skip_on_f(is_vf_device, "MMIO register readback not possible on VF\n");
 		configfs_device_fd = create_device_configfs_group(configfs_fd);
 		test_ctx_restore(configfs_device_fd, "mid");
 		close_configfs_group(configfs_fd, configfs_device_fd);

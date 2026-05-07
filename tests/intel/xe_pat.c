@@ -14,12 +14,21 @@
 #include <fcntl.h>
 
 #include "igt.h"
+#include "igt_configfs.h"
+#include "igt_device.h"
+#include "igt_fs.h"
+#include "igt_kmod.h"
+#include "igt_map.h"
+#include "igt_sriov_device.h"
+#include "igt_syncobj.h"
+#include "igt_sysfs.h"
 #include "igt_vgem.h"
 #include "intel_blt.h"
 #include "intel_mocs.h"
 #include "intel_pat.h"
 #include "linux_scaffold.h"
 
+#include "xe/xe_gt.h"
 #include "xe/xe_ioctl.h"
 #include "xe/xe_query.h"
 #include "xe/xe_util.h"
@@ -27,7 +36,14 @@
 #define XE_COH_NONE          1
 #define XE_COH_AT_LEAST_1WAY 2
 
+/*
+ * PAT index 18: XA (eXclusive Access) + UC (Uncached).
+ */
+#define XE_PAT_IDX_XA_UC     18
+
 static bool do_slow_check;
+static char bus_addr[NAME_MAX];
+static struct pci_device *pci_dev;
 
 static uint32_t create_object(int fd, int r, int size, uint16_t coh_mode,
 			      bool force_cpu_wc);
@@ -73,6 +89,10 @@ static void userptr_coh_none(int fd)
 				   size, DRM_XE_VM_BIND_OP_MAP_USERPTR, 0, NULL, 0, 0,
 				   intel_get_pat_idx_wt(fd), 0),
 		      -EINVAL);
+	igt_assert_eq(__xe_vm_bind(fd, vm, 0, 0, to_user_pointer(data), 0x40000,
+				   size, DRM_XE_VM_BIND_OP_MAP_USERPTR, 0, NULL, 0, 0,
+				   XE_PAT_IDX_XA_UC, 0),
+		      -EINVAL);
 
 	munmap(data, size);
 	xe_vm_destroy(fd, vm);
@@ -103,9 +123,58 @@ static void userptr_coh_none(int fd)
 #define COH_MODE_1WAY		2
 #define COH_MODE_2WAY		3
 
+/* Pre-Xe2 PAT bit fields (from kernel xe_pat.c) */
+#define XELP_MEM_TYPE_MASK	GENMASK(1, 0)
+
+static bool pat_entry_is_uc(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0))
+		return REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_UC &&
+		       REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_UC;
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_UC;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 0;
+}
+
+static bool pat_entry_is_wb(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0)) {
+		uint32_t l3 = REG_FIELD_GET(XE2_L3_POLICY, pat);
+
+		return l3 == L3_CACHE_POLICY_WB || l3 == L3_CACHE_POLICY_XD;
+	}
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WB;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 3;
+}
+
+static bool pat_entry_is_wt(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver >= IP_VER(20, 0))
+		return REG_FIELD_GET(XE2_L3_POLICY, pat) == L3_CACHE_POLICY_XD &&
+		       REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WT;
+
+	if (gfx_ver >= IP_VER(12, 70))
+		return REG_FIELD_GET(XE2_L4_POLICY, pat) == L4_CACHE_POLICY_WT;
+
+	return REG_FIELD_GET(XELP_MEM_TYPE_MASK, pat) == 2;
+}
+
+static bool pat_entry_is_compressed(unsigned int gfx_ver, uint32_t pat)
+{
+	if (gfx_ver < IP_VER(20, 0))
+		return false;
+
+	return !!(pat & XE2_COMP_EN);
+}
+
 static int xe_fetch_pat_sw_config(int fd, struct intel_pat_cache *pat_sw_config)
 {
-	int32_t parsed = xe_get_pat_sw_config(fd, pat_sw_config);
+	int32_t parsed = xe_get_pat_sw_config(fd, pat_sw_config, 0);
 
 	igt_assert_f(parsed > 0, "Couldn't get Xe PAT software configuration\n");
 
@@ -120,13 +189,14 @@ static int xe_fetch_pat_sw_config(int fd, struct intel_pat_cache *pat_sw_config)
 static void pat_sanity(int fd)
 {
 	uint16_t dev_id = intel_get_drm_devid(fd);
+	unsigned int gfx_ver = intel_graphics_ver(dev_id);
 	struct intel_pat_cache pat_sw_config = {};
 	int32_t parsed;
 	bool has_uc_comp = false, has_wt = false;
 
 	parsed = xe_fetch_pat_sw_config(fd, &pat_sw_config);
 
-	if (intel_graphics_ver(dev_id) >= IP_VER(20, 0)) {
+	if (gfx_ver >= IP_VER(20, 0)) {
 		for (int i = 0; i < parsed; i++) {
 			uint32_t pat = pat_sw_config.entries[i].pat;
 			if (pat_sw_config.entries[i].rsvd)
@@ -144,13 +214,104 @@ static void pat_sanity(int fd)
 	} else {
 		has_wt = true;
 	}
-	igt_assert_eq(pat_sw_config.max_index, intel_get_max_pat_index(fd));
-	igt_assert_eq(pat_sw_config.uc, intel_get_pat_idx_uc(fd));
-	igt_assert_eq(pat_sw_config.wb, intel_get_pat_idx_wb(fd));
+
+	/*
+	 * Validate that the selected PAT indices actually have the expected
+	 * cache types rather than comparing against hardcoded values.
+	 */
+	igt_assert_f(pat_entry_is_uc(gfx_ver, pat_sw_config.entries[pat_sw_config.uc].pat),
+		     "UC index %d does not point to an uncached entry (pat=%#x)\n",
+		     pat_sw_config.uc, pat_sw_config.entries[pat_sw_config.uc].pat);
+	igt_assert_f(pat_entry_is_wb(gfx_ver, pat_sw_config.entries[pat_sw_config.wb].pat),
+		     "WB index %d does not point to a WB/XA/XD entry (pat=%#x)\n",
+		     pat_sw_config.wb, pat_sw_config.entries[pat_sw_config.wb].pat);
 	if (has_wt)
-		igt_assert_eq(pat_sw_config.wt, intel_get_pat_idx_wt(fd));
-	if (has_uc_comp)
-		igt_assert_eq(pat_sw_config.uc_comp, intel_get_pat_idx_uc_comp(fd));
+		igt_assert_f(pat_entry_is_wt(gfx_ver, pat_sw_config.entries[pat_sw_config.wt].pat),
+			     "WT index %d does not point to a WT entry (pat=%#x)\n",
+			     pat_sw_config.wt, pat_sw_config.entries[pat_sw_config.wt].pat);
+	if (has_uc_comp) {
+		uint32_t uc_comp_pat = pat_sw_config.entries[pat_sw_config.uc_comp].pat;
+
+		igt_assert_f(pat_entry_is_compressed(gfx_ver, uc_comp_pat) &&
+			     pat_entry_is_uc(gfx_ver, uc_comp_pat),
+			     "UC_COMP index %d does not point to a compressed UC entry (pat=%#x)\n",
+			     pat_sw_config.uc_comp, uc_comp_pat);
+	}
+}
+
+enum pat_test_opts {
+	PAT_CHECK = 1,
+	PAT_RESET_GT = 2,
+	PAT_SUSPEND = 3,
+};
+
+/**
+ * SUBTEST: pat-sw-hw-compare
+ * Description: verify debugfs 'pat' reflects 'pat_sw_config'
+ *
+ * SUBTEST: pat-sw-hw-reset-compare
+ * Description: verify debugfs 'pat' reflects 'pat_sw_config' after gt reset
+ *
+ * SUBTEST: pat-sw-hw-suspend
+ * Description: verify debugfs 'pat' reflects 'pat_sw_config' after suspend
+ */
+static void pat_sw_hw_compare(int fd, enum pat_test_opts opts)
+{
+	bool matches = true;
+	int gt;
+
+	igt_skip_on(intel_is_vf_device(fd));
+
+	xe_for_each_gt(fd, gt) {
+		struct intel_pat_cache pat_hw_config = {};
+		struct intel_pat_cache pat_sw_config = {};
+		int hw_entries, sw_entries;
+
+		if (opts == PAT_RESET_GT)
+			xe_force_gt_reset_sync(fd, gt);
+		else if (opts == PAT_SUSPEND)
+			igt_system_suspend_autoresume(SUSPEND_STATE_STANDBY, SUSPEND_TEST_NONE);
+
+		hw_entries = xe_get_pat_hw_config(fd, &pat_hw_config, gt);
+		sw_entries = xe_get_pat_sw_config(fd, &pat_sw_config, gt);
+
+		igt_debug("[GT%d] hw_entries: %d, sw_entries: %d\n", gt, hw_entries, sw_entries);
+
+		igt_assert_eq(hw_entries, sw_entries);
+		igt_assert_lt(0, hw_entries);
+		igt_assert_lt(0, sw_entries);
+
+		for (int i = 0; i < hw_entries; i++) {
+			uint32_t hw_pat, sw_pat;
+
+			hw_pat = pat_hw_config.entries[i].pat;
+			sw_pat = pat_sw_config.entries[i].pat;
+			if (hw_pat != sw_pat) {
+				igt_debug("[GT%d] Mismatch of pat register vs sw config "
+					  "- index: %i, entries: %08x <> %08x\n",
+					  gt, i, hw_pat, sw_pat);
+				matches = false;
+			}
+		}
+
+		/* Check PTA if was explicitly programmed */
+		if (pat_sw_config.pta_mode != UINT32_MAX &&
+			pat_hw_config.pta_mode != pat_sw_config.pta_mode) {
+			igt_debug("[GT%d] Mismatch of PTA_MODE - pta: %x, pta expected: %x\n",
+				  gt, pat_hw_config.pta_mode, pat_sw_config.pta_mode);
+			matches = false;
+		}
+
+		/* Check ATS if was explicitly programmed */
+		if (pat_sw_config.pat_ats != UINT32_MAX &&
+			pat_hw_config.pat_ats != pat_sw_config.pat_ats) {
+			igt_debug("[GT%d] Mismatch of PAT_ATS - ats: %x, ats expected: %x\n",
+				  gt, pat_hw_config.pat_ats, pat_sw_config.pat_ats);
+			matches = false;
+		}
+	}
+
+	igt_assert_eq(matches, true);
 }
 
 /**
@@ -337,9 +498,13 @@ static void pat_index_blt(struct xe_pat_param *p)
 	int bpp = 32;
 	uint32_t alias, name;
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	int i;
 
 	igt_require(blt_has_fast_copy(fd));
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : intel_get_uc_mocs_index(fd);
 
 	vm = xe_vm_create(fd, 0, 0);
 	exec_queue = xe_exec_queue_create(fd, vm, &inst, 0);
@@ -363,12 +528,12 @@ static void pat_index_blt(struct xe_pat_param *p)
 	blt_copy_init(fd, &blt);
 	blt.color_depth = CD_32bit;
 
-	blt_set_object(&src, p->r1_bo, size, p->r1, intel_get_uc_mocs_index(fd),
+	blt_set_object(&src, p->r1_bo, size, p->r1, mocs_index,
 		       p->r1_pat_index, T_LINEAR,
 		       COMPRESSION_DISABLED, COMPRESSION_TYPE_3D);
 	blt_set_geom(&src, stride, 0, 0, width, height, 0, 0);
 
-	blt_set_object(&dst, p->r2_bo, size, p->r2, intel_get_uc_mocs_index(fd),
+	blt_set_object(&dst, p->r2_bo, size, p->r2, mocs_index,
 		       p->r2_pat_index, T_LINEAR,
 		       COMPRESSION_DISABLED, COMPRESSION_TYPE_3D);
 	blt_set_geom(&dst, stride, 0, 0, width, height, 0, 0);
@@ -447,6 +612,8 @@ static void pat_index_blt(struct xe_pat_param *p)
 static void pat_index_render(struct xe_pat_param *p)
 {
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	igt_render_copyfunc_t render_copy = NULL;
 	int size, stride, width = p->size->width, height = p->size->height;
 	struct intel_buf src, dst;
@@ -462,6 +629,9 @@ static void pat_index_render(struct xe_pat_param *p)
 	if (p->r2_compressed) /* XXX */
 		return;
 
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : DEFAULT_MOCS_INDEX;
+
 	bops = buf_ops_create(fd);
 
 	ibb = intel_bb_create_full(fd, 0, 0, NULL, xe_get_default_alignment(fd),
@@ -474,11 +644,11 @@ static void pat_index_render(struct xe_pat_param *p)
 
 	intel_buf_init_full(bops, p->r1_bo, &src, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r1, p->r1_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r1, p->r1_pat_index, mocs_index);
 
 	intel_buf_init_full(bops, p->r2_bo, &dst, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r2, p->r2_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r2, p->r2_pat_index, mocs_index);
 
 	/* Ensure we always see zeroes for the initial KMD zeroing */
 	render_copy(ibb,
@@ -556,6 +726,8 @@ static void pat_index_render(struct xe_pat_param *p)
 static void pat_index_dw(struct xe_pat_param *p)
 {
 	int fd = p->fd;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint8_t mocs_index;
 	int size, stride, width = p->size->width, height = p->size->height;
 	struct drm_xe_engine_class_instance *hwe;
 	struct intel_bb *ibb;
@@ -578,6 +750,9 @@ static void pat_index_dw(struct xe_pat_param *p)
 			break;
 	}
 
+	mocs_index = intel_get_device_info(dev_id)->graphics_ver >= 20 ?
+		     intel_get_defer_to_pat_mocs_index(fd) : DEFAULT_MOCS_INDEX;
+
 	vm = xe_vm_create(fd, 0, 0);
 	ctx = xe_exec_queue_create(fd, vm, hwe, 0);
 
@@ -591,12 +766,13 @@ static void pat_index_dw(struct xe_pat_param *p)
 
 	intel_buf_init_full(bops, p->r1_bo, &r1_buf, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r1, p->r1_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r1, p->r1_pat_index, mocs_index);
 	intel_bb_add_intel_buf(ibb, &r1_buf, true);
 
 	intel_buf_init_full(bops, p->r2_bo, &r2_buf, width, height, bpp, 0,
 			    I915_TILING_NONE, I915_COMPRESSION_NONE, size,
-			    stride, p->r2, p->r2_pat_index, DEFAULT_MOCS_INDEX);
+			    stride, p->r2, p->r2_pat_index, mocs_index);
+
 	intel_bb_add_intel_buf(ibb, &r2_buf, true);
 
 	/*
@@ -662,6 +838,54 @@ static void pat_index_dw(struct xe_pat_param *p)
 	intel_bb_destroy(ibb);
 
 	xe_exec_queue_destroy(fd, ctx);
+	xe_vm_destroy(fd, vm);
+}
+
+/**
+ * SUBTEST: l2-flush-opt-svm-pat-restrict
+ * Test category: negative test
+ * Description: Validate that on L2 flush optimized platforms, SVM
+ *		(CPU_ADDR_MIRROR) mappings only accept pat_index 19
+ *		(XA+UC+1WAY) and reject all other pat indices with -EINVAL.
+ */
+static void l2_flush_opt_svm_pat_restrict(int fd)
+{
+	struct drm_xe_query_config *config = xe_config(fd);
+	uint32_t vm;
+	void *buffer;
+	size_t alloc_size = xe_get_default_alignment(fd);
+	struct xe_device *xe_dev = xe_device_get(fd);
+	uint64_t svm_size;
+	size_t size = xe_get_default_alignment(fd);
+
+	svm_size = 1ull << xe_dev->va_bits;
+	vm = xe_vm_create(fd, DRM_XE_VM_CREATE_FLAG_LR_MODE |
+			  DRM_XE_VM_CREATE_FLAG_FAULT_MODE, 0);
+	xe_vm_bind_lr_sync(fd, vm, 0, 0, 0, svm_size,
+			   DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR);
+	buffer = aligned_alloc(alloc_size, SZ_2M);
+
+	igt_require(config->info[DRM_XE_QUERY_CONFIG_FLAGS] &
+		    DRM_XE_QUERY_CONFIG_FLAG_HAS_CPU_ADDR_MIRROR);
+
+	igt_assert_eq(__xe_vm_madvise(fd, vm, to_user_pointer(buffer), size,
+					0, DRM_XE_MEM_RANGE_ATTR_PAT,
+					intel_get_pat_idx_wb(fd), 0, 0), 0);
+
+	igt_assert_eq(__xe_vm_madvise(fd, vm, to_user_pointer(buffer), size,
+					0, DRM_XE_MEM_RANGE_ATTR_PAT,
+					intel_get_pat_idx_uc(fd), 0, 0), -EINVAL);
+
+	igt_assert_eq(__xe_vm_madvise(fd, vm, to_user_pointer(buffer), size,
+					0, DRM_XE_MEM_RANGE_ATTR_PAT,
+					intel_get_pat_idx_wt(fd), 0, 0), -EINVAL);
+
+	igt_assert_eq(__xe_vm_madvise(fd, vm, to_user_pointer(buffer), size,
+					0, DRM_XE_MEM_RANGE_ATTR_PAT,
+					XE_PAT_IDX_XA_UC, 0, 0), -EINVAL);
+
+	free(buffer);
+	xe_vm_unbind_lr_sync(fd, vm, 0, 0, svm_size);
 	xe_vm_destroy(fd, vm);
 }
 
@@ -800,6 +1024,11 @@ static void prime_external_import_coh(void)
 		      0);
 	xe_vm_unbind_sync(fd2, vm, 0, 0x40000, size);
 
+	igt_assert_eq(__xe_vm_bind(fd2, vm, 0, handle_import, 0, 0x40000,
+				   size, DRM_XE_VM_BIND_OP_MAP, 0, NULL, 0, 0,
+				   XE_PAT_IDX_XA_UC, 0),
+		      -EINVAL);
+
 	xe_vm_destroy(fd2, vm);
 
 	/*
@@ -844,15 +1073,18 @@ static bool has_no_compression_hint(int fd)
  * Test category: functionality test
  * Description: Validates that binding a BO created with
  * the NO_COMPRESSION flag using a compressed PAT index fails
- * with -EINVAL on Xe2+ platforms.
+ * with -EINVAL on Xe2+ platforms. On platforms where CCS
+ * does not exist, the test verifies uncompressed access works.
  */
 
 static void bo_comp_disable_bind(int fd)
 {
 	size_t size = xe_get_default_alignment(fd);
-	uint8_t comp_pat_index, uncomp_pat_index;
-	bool supported;
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	bool has_flatccs = HAS_FLATCCS(dev_id);
+	uint8_t uncomp_pat_index;
 	uint32_t vm, bo;
+	bool supported;
 	int ret;
 
 	supported = has_no_compression_hint(fd);
@@ -868,14 +1100,25 @@ static void bo_comp_disable_bind(int fd)
 	igt_assert_eq(ret, 0);
 	vm = xe_vm_create(fd, 0, 0);
 
-	comp_pat_index = intel_get_pat_idx_uc_comp(fd);
 	uncomp_pat_index = intel_get_pat_idx_uc(fd);
 
-	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, 0x100000,
-				   size, 0, 0, NULL, 0,
-				   0, comp_pat_index, 0),
-		      -EINVAL);
+	/*
+	 * On platforms with CCS, binding a NO_COMPRESSION BO with a
+	 * compressed PAT index must fail. On platforms without CCS,
+	 * there is no valid compressed PAT index, so skip this check.
+	 */
+	if (has_flatccs) {
+		uint8_t comp_pat_index = intel_get_pat_idx_uc_comp(fd);
 
+		igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, 0x100000,
+					   size, 0, 0, NULL, 0,
+					   0, comp_pat_index, 0),
+			      -EINVAL);
+	} else {
+		igt_debug("Platform has no CCS, skipping compressed PAT bind check\n");
+	}
+
+	/* Uncompressed bind must always succeed */
 	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, 0x100000,
 				   size, 0, 0, NULL, 0,
 				   0, uncomp_pat_index, 0),
@@ -1102,6 +1345,11 @@ const struct pat_index_entry bmg_g21_pat_index_modes[] = {
 	{ NULL, 27, false, "c2-2way",     XE_COH_AT_LEAST_1WAY       },
 };
 
+const struct pat_index_entry xe3p_lpg_coherency_pat_index_modes[] = {
+	{ NULL, 18, false, "xa-l3-uc",	 XE_COH_NONE          },
+	{ NULL, 19, false, "xa-l3-1way", XE_COH_AT_LEAST_1WAY },
+};
+
 /*
  * Depending on 2M/1G GTT pages we might trigger different PTE layouts for the
  * PAT bits, so make sure we test with and without huge-pages. Also ensure we
@@ -1164,6 +1412,18 @@ static uint32_t create_object(int fd, int r, int size, uint16_t coh_mode,
  * SUBTEST: pat-index-xe2
  * Test category: functionality test
  * Description: Check some of the xe2 pat_index modes.
+ */
+
+/**
+ * SUBTEST: xa-app-transient-media-off
+ * Test category: functionality test
+ * Description: Check some of the xe4-lpg pat_index modes with media off.
+ */
+
+/**
+ * SUBTEST:  xa-app-transient-media-on
+ * Test category: functionality test
+ * Description: Check some of the xe3p-lpg pat_index modes with media on.
  */
 
 static void subtest_pat_index_modes_with_regions(int fd,
@@ -1275,6 +1535,662 @@ static void subtest_pat_index_modes_with_regions(int fd,
 	}
 }
 
+struct fs_pat_entry {
+	uint8_t pat_index;
+	const char *name;
+	uint16_t cpu_caching;
+	bool exp_result;
+};
+
+const struct fs_pat_entry fs_xe2_integrated[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, false },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, false },
+};
+
+const struct fs_pat_entry fs_xe2_discrete[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 5, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3p_xpc[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 3, "cpu-wc-gpu-uc-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 4, "cpu-wb-gpu-uc-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+const struct fs_pat_entry fs_xe3p_lpg[] = {
+	{ 2, "cpu-wb-gpu-l3-2way", DRM_XE_GEM_CPU_CACHING_WB, true },
+	{ 18, "cpu-wc-gpu-xa-non-coh", DRM_XE_GEM_CPU_CACHING_WC, true },
+	{ 19, "cpu-wb-gpu-xa-1way", DRM_XE_GEM_CPU_CACHING_WB, true },
+};
+
+#define CPUDW_INC   0x0
+#define GPUDW_WRITE 0x4
+#define GPUDW_READY 0x40
+#define READY_VAL   0xabcd
+#define FINISH_VAL  0x0bae
+
+static void __false_sharing(int fd, const struct fs_pat_entry *fs_entry)
+{
+	size_t size = xe_get_default_alignment(fd), bb_size;
+	uint32_t vm, exec_queue, bo, bb, *map, *batch;
+	struct drm_xe_engine_class_instance *hwe;
+	struct drm_xe_sync sync = {
+	    .type = DRM_XE_SYNC_TYPE_SYNCOBJ, .flags = DRM_XE_SYNC_FLAG_SIGNAL,
+	};
+	struct drm_xe_exec exec = {
+		.num_batch_buffer = 1,
+		.num_syncs = 1,
+		.syncs = to_user_pointer(&sync),
+	};
+	uint64_t addr = 0x40000;
+	uint64_t bb_addr = 0x100000;
+	uint32_t loops = 0x0, gpu_exp_value;
+	uint32_t region = system_memory(fd);
+	int loop_addr, i = 0;
+	int pat_index = fs_entry->pat_index;
+	int inc_idx, write_idx, ready_idx;
+	bool result;
+
+	inc_idx = CPUDW_INC / sizeof(*map);
+	write_idx = GPUDW_WRITE / sizeof(*map);
+	ready_idx = GPUDW_READY / sizeof(*map);
+
+	vm = xe_vm_create(fd, 0, 0);
+
+	bo = xe_bo_create_caching(fd, 0, size, region, 0, fs_entry->cpu_caching);
+	map = xe_bo_map(fd, bo, size);
+
+	bb_size = xe_bb_size(fd, SZ_4K);
+	bb = xe_bo_create(fd, 0, bb_size, region, 0);
+	batch = xe_bo_map(fd, bb, bb_size);
+
+	sync.handle = syncobj_create(fd, 0);
+	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bo, 0, addr,
+				   size, DRM_XE_VM_BIND_OP_MAP, 0, &sync, 1, 0,
+				   pat_index, 0),
+			0);
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	syncobj_reset(fd, &sync.handle, 1);
+	igt_assert_eq(__xe_vm_bind(fd, vm, 0, bb, 0, bb_addr,
+				   bb_size, DRM_XE_VM_BIND_OP_MAP, 0, &sync, 1, 0,
+				   DEFAULT_PAT_INDEX, 0),
+			0);
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	/* Unblock cpu wait */
+	batch[i++] = MI_STORE_DWORD_IMM_GEN4;
+	batch[i++] = addr + GPUDW_READY;
+	batch[i++] = addr >> 32;
+	batch[i++] = READY_VAL;
+
+	/* Unblock after cpu started to spin */
+	batch[i++] = MI_SEMAPHORE_WAIT_CMD | MI_SEMAPHORE_POLL |
+		     MI_SEMAPHORE_SAD_NEQ_SDD | (4 - 2);
+	batch[i++] = 0;
+	batch[i++] = addr + CPUDW_INC;
+	batch[i++] = addr >> 32;
+
+	loop_addr = i;
+	batch[i++] = MI_STORE_DWORD_IMM_GEN4;
+	batch[i++] = addr + GPUDW_WRITE;
+	batch[i++] = addr >> 32;
+	batch[i++] = READY_VAL;
+
+	batch[i++] = MI_COND_BATCH_BUFFER_END | MI_DO_COMPARE | MAD_EQ_IDD | 2;
+	batch[i++] = READY_VAL;
+	batch[i++] = addr + GPUDW_READY;
+	batch[i++] = addr >> 32;
+
+	batch[i++] = MI_BATCH_BUFFER_START | 1 << 8 | 1;
+	batch[i++] = bb_addr + loop_addr * sizeof(uint32_t);
+	batch[i++] = bb_addr >> 32;
+
+	batch[i++] = MI_BATCH_BUFFER_END;
+
+	xe_for_each_engine(fd, hwe)
+		break;
+
+	exec_queue = xe_exec_queue_create(fd, vm, hwe, 0);
+	exec.exec_queue_id = exec_queue;
+	exec.address = bb_addr;
+	syncobj_reset(fd, &sync.handle, 1);
+	xe_exec(fd, &exec);
+
+	while(READ_ONCE(map[ready_idx]) != READY_VAL);
+
+	igt_until_timeout(2) {
+		WRITE_ONCE(map[inc_idx], map[inc_idx] + 1);
+		loops++;
+	}
+
+	WRITE_ONCE(map[ready_idx], FINISH_VAL);
+
+	igt_assert_eq(syncobj_wait_err(fd, &sync.handle, 1, INT64_MAX, 0), 0);
+
+	igt_debug("[%d]: %08x (cpu) [loops: %08x] | [%d]: %08x (gpu) | [%d]: %08x (ready)\n",
+		  inc_idx, map[inc_idx], loops, write_idx, map[write_idx],
+		  ready_idx, map[ready_idx]);
+
+	result = map[inc_idx] == loops;
+	gpu_exp_value = map[ready_idx];
+	igt_debug("got: %d, expected: %d\n", result, fs_entry->exp_result);
+
+	xe_vm_unbind_sync(fd, vm, 0, addr, size);
+	xe_vm_unbind_sync(fd, vm, 0, bb_addr, bb_size);
+	gem_munmap(batch, bb_size);
+	gem_munmap(map, size);
+	gem_close(fd, bo);
+	gem_close(fd, bb);
+
+	xe_vm_destroy(fd, vm);
+
+	igt_assert_eq(result, fs_entry->exp_result);
+	igt_assert_eq(gpu_exp_value, FINISH_VAL);
+}
+
+/**
+ * SUBTEST: false-sharing
+ * Test category: functionality test
+ * Description: Check cache line coherency on 1way/coh_none
+ */
+
+static void false_sharing(int fd)
+{
+	uint16_t dev_id = intel_get_drm_devid(fd);
+	uint32_t graphics_ver = intel_get_device_info(dev_id)->graphics_ver;
+	bool is_dgfx = xe_has_vram(fd);
+
+	const struct fs_pat_entry *fs_entries;
+	int num_entries;
+
+	if (intel_graphics_ver(dev_id) == IP_VER(35, 11)) {
+		num_entries = ARRAY_SIZE(fs_xe3p_xpc);
+		fs_entries = fs_xe3p_xpc;
+	} else if (intel_graphics_ver(dev_id) == IP_VER(35, 10)) {
+		num_entries = ARRAY_SIZE(fs_xe3p_lpg);
+		fs_entries = fs_xe3p_lpg;
+	} else if (graphics_ver == 20) {
+		if (is_dgfx) {
+			num_entries = ARRAY_SIZE(fs_xe2_discrete);
+			fs_entries = fs_xe2_discrete;
+		} else {
+			num_entries = ARRAY_SIZE(fs_xe2_integrated);
+			fs_entries = fs_xe2_integrated;
+		}
+	} else {
+		num_entries = ARRAY_SIZE(fs_xe3);
+		fs_entries = fs_xe3;
+	}
+
+	for (int i = 0; i < num_entries; i++) {
+		igt_dynamic_f("%s", fs_entries[i].name) {
+			__false_sharing(fd, &fs_entries[i]);
+		}
+	}
+}
+
+static void reset(int sig)
+{
+	int configfs_fd;
+
+	igt_kmod_unbind("xe", bus_addr);
+
+	/* Drop all custom configfs settings from subtests */
+	configfs_fd = igt_configfs_open("xe");
+	if (configfs_fd >= 0)
+		igt_fs_remove_dir(configfs_fd, bus_addr);
+	close(configfs_fd);
+
+	/* Bind again a clean driver with no custom settings */
+	igt_kmod_bind("xe", bus_addr);
+}
+
+static void xa_app_transient_test(int configfs_device_fd, bool media_on)
+{
+	int fd, fw_handle, gt;
+
+	igt_kmod_unbind("xe", bus_addr);
+
+	if (media_on)
+		igt_assert(igt_sysfs_set(configfs_device_fd,
+					 "gt_types_allowed", "primary,media"));
+	else
+		igt_assert(igt_sysfs_set(configfs_device_fd,
+					 "gt_types_allowed", "primary"));
+
+	igt_kmod_bind("xe", bus_addr);
+
+	fd = drm_open_driver(DRIVER_XE);
+
+	/* Prevent entering C6 for the duration of the test, since this can result
+	 * in randomly flushing the entire device side caches, invalidating our XA
+	 * testing.
+	 */
+	fw_handle = igt_debugfs_open(fd, "forcewake_all", O_RDONLY);
+	igt_require(fw_handle >= 0);
+
+	subtest_pat_index_modes_with_regions(fd, xe3p_lpg_coherency_pat_index_modes,
+					     ARRAY_SIZE(xe3p_lpg_coherency_pat_index_modes));
+
+	/* check status of c state, it should not be in c6 due to forcewake. */
+	xe_for_each_gt(fd, gt)
+		igt_assert(!xe_gt_is_in_c6(fd, gt));
+
+	close(fw_handle);
+}
+
+/**
+ * SUBTEST: pt-caching
+ * Description: verify pt fetch doesn't trigger pagefaults on TLB eviction
+ *              (use many objects)
+ *
+ * SUBTEST: pt-caching-single-object
+ * Description: verify pt fetch doesn't trigger pagefaults on TLB eviction
+ *              (use single object bound with different offsets)
+ *
+ * SUBTEST: pt-caching-random-offsets
+ * Description: verify pt fetch doesn't trigger pagefaults on TLB eviction
+ *              (use many objects with random offsets)
+ *
+ * SUBTEST: pt-caching-update-pat-and-pte
+ * Description: verify read after write returns expected values when
+ *              NULL and normal object PTEs exists in same cacheline
+ *
+ */
+
+/*
+ * Helpers for spreading over pagetables
+ *
+ *      E         D         C         B         A
+ * +- 9bits -+- 9bits -+- 9bits -+- 9bits -+- 9bits -+
+ * |876543210|876543210|876543210|876543210|876543210|
+ *
+ * index is spread over n-groups
+ *
+ * (example) index = 876543210 (bits, not value)
+ *
+ * for 3-group bit shift will land
+ *      C         B         A
+ * |000000852|000000741|000000630|
+ *
+ * for 4-group bit shift will land
+ *      D         C         B         A
+ * |000000073|000000062|000000051|000000840|
+ *
+ * for 5-group bit shift will land
+ *      E         D         C         B         A
+ * |000000004|000000083|000000072|000000061|000000050|
+ */
+
+enum pt_groups {
+	GROUPS_3s = 3,
+	GROUPS_4s,
+	GROUPS_5s,
+};
+
+enum pt_test_opts {
+	PT_SINGLE_OBJECT = 1,
+	PT_RANDOM_OFFSETS = 2,
+	PT_UPDATE_PAT_AND_PTE = 3,
+};
+
+static uint64_t get_every_nth_bit(uint64_t v, int nth)
+{
+	uint64_t ret = 0;
+	int i = 0;
+
+	while (v) {
+		ret |= (v & 1) << i;
+		v >>= nth;
+		i++;
+	}
+
+	return ret;
+}
+
+static uint64_t pt_spread(uint64_t nr, enum pt_groups groups)
+{
+	uint64_t ret_pt = 0;
+
+	switch (groups) {
+	case GROUPS_5s:
+		ret_pt |= get_every_nth_bit(nr >> 4, groups) << 36;
+	case GROUPS_4s:
+		ret_pt |= get_every_nth_bit(nr >> 3, groups) << 27;
+	case GROUPS_3s:
+		ret_pt |= get_every_nth_bit(nr >> 2, groups) << 18 |
+			  get_every_nth_bit(nr >> 1, groups) << 9 |
+			  get_every_nth_bit(nr, groups);
+		break;
+	}
+
+	return ret_pt;
+}
+
+struct pt_object {
+	uint32_t bo;
+	uint32_t size;
+	uint64_t address;
+	uint64_t offset;
+	uint32_t dword;
+	uint32_t flags;
+};
+
+/* Batch address, selected low to avoid being placed in 48-57 range */
+#define BATCH_ADDRESS 0x10000
+
+/* Start address for all allocations */
+#define OFFSET_START 0x200000
+
+static struct pt_object *
+pt_create_objects(int xe, int num_objs, enum pt_test_opts opts, enum pt_groups groups,
+		  uint64_t addr_shift)
+{
+	struct pt_object *objs;
+	uint64_t obj_size = SZ_4K;
+	uint64_t va_mask = (1ULL << xe_va_bits(xe)) - 1;
+	struct igt_map *hash = NULL;
+	int i, max_randoms;
+	uint32_t region = system_memory(xe), vram_region = vram_memory(xe, 0);
+	uint32_t flags = 0;
+
+	objs = calloc(num_objs, sizeof(*objs));
+	igt_assert(objs);
+
+	if (xe_has_vram(xe) && xe_min_page_size(xe, vram_region) == SZ_4K) {
+		region = vram_region;
+		flags = DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM;
+	}
+
+	if (opts == PT_RANDOM_OFFSETS)
+		hash = igt_map_create(igt_map_hash_64, igt_map_equal_64);
+
+	for (i = 0; i < num_objs; i++) {
+		if (opts == PT_RANDOM_OFFSETS) {
+			uint64_t addr, *paddr;
+
+			objs[i].bo = xe_bo_create(xe, 0, obj_size, region, flags);
+			objs[i].size = obj_size;
+
+			max_randoms = 16; /* arbitrary, very unlikely to exceed */
+			while (--max_randoms) {
+				addr = (uint64_t)rand() << 32 | rand();
+				addr &= ~((1 << 21) - 1) & va_mask;
+				if (addr > addr + OFFSET_START)
+					continue; /* avoid wrap around */
+				addr += OFFSET_START;
+				paddr = igt_map_search(hash, &addr);
+				if (!paddr)
+					break;
+				else
+					igt_debug("Address 0x%lx already found, randomizing again\n",
+						  addr);
+			}
+			igt_assert_neq(max_randoms, 0);
+			igt_map_insert(hash, &addr, from_user_pointer(i));
+			objs[i].address = addr;
+		} else if (opts == PT_SINGLE_OBJECT) {
+			if (!i) {
+				uint64_t total_size = num_objs * obj_size;
+
+				objs[i].bo = xe_bo_create(xe, 0, total_size,
+							  region, flags);
+				objs[i].size = total_size;
+			} else {
+				objs[i].bo = objs[0].bo;
+			}
+			objs[i].offset = i * obj_size;
+			objs[i].address = (pt_spread(i, groups) << 21) +
+					  OFFSET_START + addr_shift;
+		} else {
+			objs[i].bo = xe_bo_create_caching(xe, 0, obj_size, region, flags,
+							  DRM_XE_GEM_CPU_CACHING_WC);
+			objs[i].size = obj_size;
+			objs[i].address = (pt_spread(i, groups) << 21) +
+					  OFFSET_START + addr_shift;
+		}
+		objs[i].dword = i + 1 + addr_shift;
+
+		igt_debug("object[%d]: [bo: %u, size: 0x%x, offset: 0x%lx, address: 0x%lx]\n",
+			  i, objs[i].bo, objs[i].size, objs[i].offset, objs[i].address);
+	}
+
+	igt_map_destroy(hash, NULL);
+
+	return objs;
+}
+
+static void pt_destroy_objects(int xe, struct pt_object *objs, int num_objs)
+{
+	int i;
+
+	for (i = 0; i < num_objs; i++) {
+		if (objs[i].size)
+			gem_close(xe, objs[i].bo);
+		else
+			break;
+	}
+	free(objs);
+}
+
+static void pt_bind_objects(int xe, uint32_t vm, struct pt_object *objs,
+			    int num_objs, uint32_t flags, uint8_t pat_index)
+{
+	struct drm_xe_sync sync = {
+		.type = DRM_XE_SYNC_TYPE_SYNCOBJ,
+		.flags = DRM_XE_SYNC_FLAG_SIGNAL,
+	};
+	uint32_t obj_size = SZ_4K;
+	int i;
+
+	for (i = 0; i < num_objs; i++) {
+		igt_debug("i: %x, address: 0x%lx, offset: %lx\n",
+			  i, objs[i].address, objs[i].offset);
+
+		sync.handle = syncobj_create(xe, 0);
+
+		igt_assert_eq(__xe_vm_bind(xe, vm, 0,
+					   flags == DRM_XE_VM_BIND_FLAG_NULL ? 0 : objs[i].bo,
+					   objs[i].offset,
+					   objs[i].address, obj_size,
+					   DRM_XE_VM_BIND_OP_MAP,
+					   flags,
+					   &sync, 1, 0,
+					   pat_index, 0), 0);
+
+		igt_assert(syncobj_wait(xe, &sync.handle, 1, INT64_MAX, 0, NULL));
+		syncobj_destroy(xe, sync.handle);
+		objs[i].flags = flags;
+	}
+}
+
+static void pt_fill_objects(int xe, uint32_t vm, struct pt_object *objs,
+			    int num_objs)
+{
+	uint64_t bb_size = num_objs * 4 * sizeof(uint32_t) + sizeof(uint32_t);
+	uint64_t batch_addr = 0;
+	uint32_t bb, exec_queue;
+	uint32_t *batch;
+	int i, n = 0;
+
+	batch_addr = ALIGN(BATCH_ADDRESS, xe_get_default_alignment(xe));
+	igt_debug("Batch offset: 0x%lx\n", batch_addr);
+
+	bb_size = xe_bb_size(xe, bb_size);
+	bb = xe_bo_create(xe, 0, bb_size, vram_if_possible(xe, 0),
+			  DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM);
+	xe_vm_bind_sync(xe, vm,	bb, 0, batch_addr, bb_size);
+	batch = xe_bo_map(xe, bb, bb_size);
+	for (i = 0; i < num_objs; i++) {
+		batch[n++] = MI_STORE_DWORD_IMM_GEN4;
+		batch[n++] = objs[i].address;
+		batch[n++] = objs[i].address >> 32;
+		batch[n++] = objs[i].dword;
+	}
+	batch[n++] = MI_BATCH_BUFFER_END;
+	munmap(batch, bb_size);
+
+	exec_queue = xe_exec_queue_create_class(xe, vm, DRM_XE_ENGINE_CLASS_COPY);
+	xe_exec_wait(xe, exec_queue, batch_addr);
+
+	xe_exec_queue_destroy(xe, exec_queue);
+	xe_vm_unbind_sync(xe, vm, 0, batch_addr, bb_size);
+	gem_close(xe, bb);
+}
+
+static void pt_check_objects(int xe, struct pt_object *objs, int num_objs,
+			     enum pt_test_opts opts)
+{
+	uint32_t *map, v;
+	int i;
+
+	igt_debug("Checking objects\n");
+	if (opts == PT_SINGLE_OBJECT) {
+		map = xe_bo_map(xe, objs[0].bo, objs[0].size);
+		for (i = 0; i < num_objs; i++) {
+			v = map[0 + (i * SZ_4K / sizeof(*map))];
+			igt_debug("[%d]: bo: %u, value %08x\n", i, objs[i].bo, v);
+			igt_assert_eq(v, objs[i].dword);
+		}
+		munmap(map, objs[0].size);
+	} else {
+		for (i = 0; i < num_objs; i++) {
+			map = xe_bo_map(xe, objs[i].bo, objs[i].size);
+			v = map[0];
+			igt_debug("[%d]: bo: %u, value %08x\n", i, objs[i].bo, v);
+
+			/*
+			 * CPU mapping points to object data, so after rebind
+			 * from writeable to NULL GPU binding writing to it
+			 * will still keep previous data in the object from
+			 * CPU point of view. Clear it to ensure we don't read
+			 * stale data.
+			 */
+			if (opts == PT_UPDATE_PAT_AND_PTE)
+				memset(map, 0, objs[i].size);
+
+			munmap(map, objs[i].size);
+			if (objs[i].flags == DRM_XE_VM_BIND_FLAG_NULL)
+				igt_assert_eq(v, 0);
+			else
+				igt_assert_eq(v, objs[i].dword);
+		}
+	}
+}
+
+#define FILL_TLB_SIZE SZ_1M
+static void pt_caching_test(int xe, enum pt_test_opts opts)
+{
+	struct pt_object *objs1, *objs2;
+	uint32_t vm;
+	uint8_t pat_index = DEFAULT_PAT_INDEX;
+	int num_objs = FILL_TLB_SIZE / 64, every, bits, bgrps, i;
+
+	igt_require_f(xe_min_page_size(xe, system_memory(xe)) == SZ_4K,
+		      "We need at least one region with 4K alignment\n");
+
+	/*
+	 * For discrete where alignment is larger than 4K fallback to system
+	 * memory for objects location and decrease number of iterations.
+	 */
+	if (xe_get_default_alignment(xe) != SZ_4K) {
+		num_objs /= 4;
+	} else if (xe_has_vram(xe)) {
+		/*
+		 * For random offsets each 4K object may consume up to 3 or 4
+		 * 4K pages for pde/pte - so divisor == 12 should be enough
+		 * to keep everything in vram with some minor free space margin.
+		 * For rest each 4K object has 4K pte + pde which consumes about
+		 * ~7%, so divisor == 4 should cause to occupy ~82% of vram.
+		 */
+		int div = opts == PT_RANDOM_OFFSETS ? 12 : 4;
+
+		num_objs = min_t(int, num_objs,
+				 (xe_visible_vram_size(xe, 0) / SZ_4K / div));
+	}
+
+	vm = xe_vm_create(xe, 0, 0);
+	igt_info("va_bits: %d, num_objs: %u, spread over pt levels:\n",
+		 xe_va_bits(xe), num_objs);
+
+	if (xe_va_bits(xe) > 48)
+		every = 4;
+	else
+		every = 3;
+
+	if (opts != PT_RANDOM_OFFSETS) {
+		bits = igt_fls(num_objs - 1);
+		bgrps = DIV_ROUND_UP(bits, every);
+		for (i = 0; i < every; i++)
+			igt_info("[%d]: %d\n", i, num_objs >> bgrps * i);
+	} else {
+		uint32_t seed = time(NULL);
+
+		igt_info("-> random, seed: %u\n", seed);
+		srand(seed);
+	}
+
+	objs1 = pt_create_objects(xe, num_objs, opts, every, 0);
+	objs2 = pt_create_objects(xe, num_objs, opts, every, SZ_8K);
+
+	/*
+	 * Testing scenario:
+	 *  - bind 4K objects or single one (using different offsets)
+	 *    spreading them over different pt/pd levels
+	 *  - do memory writes to all of these objects causing TLB eviction
+	 *  - bind another set of 4K objects which will reside in same cache
+	 *    line, but after one entry gap
+	 *  - ensure writes succeed and no pagefault occur
+	 */
+	if (opts != PT_UPDATE_PAT_AND_PTE) {
+		pt_bind_objects(xe, vm, objs1, num_objs, 0, pat_index);
+		pt_fill_objects(xe, vm, objs1, num_objs);
+		pt_check_objects(xe, objs1, num_objs, opts);
+
+		pt_bind_objects(xe, vm, objs2, num_objs, 0, pat_index);
+		pt_fill_objects(xe, vm, objs2, num_objs);
+		pt_check_objects(xe, objs2, num_objs, opts);
+	/*
+	 * For PAT/PTE change we use different pat indices and
+	 * we keep <NULL PTE, invalid, valid obj PTE> in same cache line.
+	 * After write/read scenario we exchange the arrangement to
+	 * <valid obj PTE, invalid, NULL PTE> to ensure cachelines were
+	 * properly invalidated.
+	 */
+	} else {
+		pat_index = get_pat_idx_uc(xe, NULL);
+		pt_bind_objects(xe, vm, objs1, num_objs, DRM_XE_VM_BIND_FLAG_NULL, pat_index);
+		pt_bind_objects(xe, vm, objs2, num_objs, 0, pat_index);
+		pt_fill_objects(xe, vm, objs1, num_objs);
+		pt_fill_objects(xe, vm, objs2, num_objs);
+		pt_check_objects(xe, objs1, num_objs, opts);
+		pt_check_objects(xe, objs2, num_objs, opts);
+
+		pat_index = get_pat_idx_wb(xe, NULL);
+		pt_bind_objects(xe, vm, objs1, num_objs, 0, pat_index);
+		pt_bind_objects(xe, vm, objs2, num_objs, DRM_XE_VM_BIND_FLAG_NULL, pat_index);
+		pt_fill_objects(xe, vm, objs1, num_objs);
+		pt_fill_objects(xe, vm, objs2, num_objs);
+		pt_check_objects(xe, objs1, num_objs, opts);
+		pt_check_objects(xe, objs2, num_objs, opts);
+	}
+
+	/* Implicit vm cleanup */
+	xe_vm_destroy(xe, vm);
+	pt_destroy_objects(xe, objs1, num_objs);
+	pt_destroy_objects(xe, objs2, num_objs);
+}
+
 static int opt_handler(int opt, int opt_index, void *data)
 {
 	switch (opt) {
@@ -1311,6 +2227,15 @@ int igt_main_args("V", NULL, help_str, opt_handler, NULL)
 
 	igt_subtest("pat-sanity")
 		pat_sanity(fd);
+
+	igt_subtest("pat-sw-hw-compare")
+		pat_sw_hw_compare(fd, 0);
+
+	igt_subtest("pat-sw-hw-reset-compare")
+		pat_sw_hw_compare(fd, PAT_RESET_GT);
+
+	igt_subtest("pat-sw-hw-suspend")
+		pat_sw_hw_compare(fd, PAT_SUSPEND);
 
 	igt_subtest("pat-index-all")
 		pat_index_all(fd);
@@ -1359,6 +2284,59 @@ int igt_main_args("V", NULL, help_str, opt_handler, NULL)
 
 	igt_subtest("display-vs-wb-transient")
 		display_vs_wb_transient(fd);
+
+	igt_subtest_with_dynamic("false-sharing") {
+		igt_require(intel_get_device_info(dev_id)->graphics_ver >= 20);
+
+		false_sharing(fd);
+	}
+
+	igt_subtest_group() {
+		int configfs_fd, configfs_device_fd;
+
+		igt_fixture() {
+			igt_require(intel_graphics_ver(dev_id) == IP_VER(35, 10));
+
+			pci_dev = igt_device_get_pci_device(fd);
+			snprintf(bus_addr, sizeof(bus_addr), "%04x:%02x:%02x.%01x",
+				 pci_dev->domain, pci_dev->bus, pci_dev->dev, pci_dev->func);
+
+			configfs_fd = igt_configfs_open("xe");
+			igt_require(configfs_fd != -1);
+			configfs_device_fd = igt_fs_create_dir(configfs_fd, bus_addr,
+							       S_IRWXU | S_IRGRP | S_IXGRP |
+							       S_IROTH | S_IXOTH);
+			igt_install_exit_handler(reset);
+		}
+
+		igt_subtest_with_dynamic("xa-app-transient-media-off")
+			xa_app_transient_test(configfs_device_fd, false);
+
+		igt_subtest_with_dynamic("xa-app-transient-media-on")
+			xa_app_transient_test(configfs_device_fd, true);
+
+		igt_fixture() {
+			close(configfs_device_fd);
+			close(configfs_fd);
+		}
+	}
+
+	igt_subtest("l2-flush-opt-svm-pat-restrict") {
+		igt_require(intel_graphics_ver(dev_id) == IP_VER(35, 10));
+		l2_flush_opt_svm_pat_restrict(fd);
+	}
+
+	igt_subtest("pt-caching")
+		pt_caching_test(fd, 0);
+
+	igt_subtest("pt-caching-single-object")
+		pt_caching_test(fd, PT_SINGLE_OBJECT);
+
+	igt_subtest("pt-caching-random-offsets")
+		pt_caching_test(fd, PT_RANDOM_OFFSETS);
+
+	igt_subtest("pt-caching-update-pat-and-pte")
+		pt_caching_test(fd, PT_UPDATE_PAT_AND_PTE);
 
 	igt_fixture()
 		drm_close_driver(fd);

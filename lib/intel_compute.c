@@ -77,12 +77,19 @@
 #define TGP_long_kernel_loop_count		10
 #define XE2_THREADGROUP_PREEMPT_XDIM		0x4000
 
+enum bo_dict_type {
+	BO_TYPE_INPUT = 1,
+	BO_TYPE_OUTPUT
+};
+
 struct bo_dict_entry {
 	uint64_t addr;
 	uint32_t size;
 	void *data;
 	const char *name;
 	uint32_t handle;
+	enum bo_dict_type bo_type;
+	bool is_owner;
 };
 
 struct bo_sync {
@@ -142,32 +149,60 @@ static void bo_check_square(float *input, float *output, int size)
 	}
 }
 
-static float *get_input_data(const struct bo_execenv *execenv,
-			     const struct user_execenv *user,
-			     void *data)
+static struct bo_dict_entry *bo_dict_find_by_type(struct bo_dict_entry *bo_dict,
+						  int entries,
+						  enum bo_dict_type bo_type)
 {
+	struct bo_dict_entry *entry = NULL;
+
+	for (int i = 0; i < entries; i++)
+		if (bo_dict[i].bo_type == bo_type) {
+			entry = &bo_dict[i];
+			break;
+		}
+	igt_assert_f(entry, "bo_type %d not found in bo_dict\n", bo_type);
+
+	return entry;
+}
+
+static float *get_input_data(const struct bo_execenv *execenv,
+			     struct bo_dict_entry *bo_dict,
+			     int entries)
+{
+	const struct user_execenv *user = execenv->user;
 	float *input_data;
 
-	if (user && user->input_addr) {
+	if (user && user->input_addr && !user->input_bo) {
 		input_data = from_user_pointer(user->input_addr);
 	} else {
-		input_data = (float *) data;
-		bo_randomize(input_data, execenv->loop_count);
+		struct bo_dict_entry *entry;
+
+		entry = bo_dict_find_by_type(bo_dict, entries, BO_TYPE_INPUT);
+		input_data = (float *) entry->data;
+
+		/* Don't randomize on user passed bo */
+		if ((!user) || (user && !user->input_bo))
+			bo_randomize(input_data, execenv->loop_count);
 	}
 
 	return input_data;
 }
 
 static float *get_output_data(const struct bo_execenv *execenv,
-			      const struct user_execenv *user,
-			      void *data)
+			      struct bo_dict_entry *bo_dict,
+			      int entries)
 {
+	const struct user_execenv *user = execenv->user;
 	float *output_data;
 
-	if (user && user->output_addr)
+	if (user && user->output_addr && !user->output_bo)
 		output_data = from_user_pointer(user->output_addr);
-	else
-		output_data = (float *) data;
+	else {
+		struct bo_dict_entry *entry;
+
+		entry = bo_dict_find_by_type(bo_dict, entries, BO_TYPE_OUTPUT);
+		output_data = (float *) entry->data;
+	}
 
 	return output_data;
 }
@@ -268,6 +303,7 @@ static void bo_execenv_bind(struct bo_execenv *execenv,
 			uint32_t placement, flags = 0;
 
 			bo_sync->sync = 0;
+			bo_dict[i].is_owner = true;
 
 			switch (alloc_prefs) {
 			case EXECENV_PREF_SYSTEM:
@@ -283,17 +319,41 @@ static void bo_execenv_bind(struct bo_execenv *execenv,
 				break;
 			}
 
-			bo_dict[i].handle = xe_bo_create(fd, execenv->vm, bo_dict[i].size,
-							 placement, flags);
-			bo_dict[i].data = xe_bo_map(fd, bo_dict[i].handle, bo_dict[i].size);
-			xe_vm_bind_async(fd, vm, 0, bo_dict[i].handle, 0, bo_dict[i].addr,
-					 bo_dict[i].size, &sync, 1);
-			xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, exec_queue,
-				       INT64_MAX);
-			memset(bo_dict[i].data, 0, bo_dict[i].size);
+			/*
+			 * For input/output buffers skip their creation if
+			 * were passed from the user
+			 */
+			if (execenv->user && bo_dict[i].bo_type == BO_TYPE_INPUT &&
+			    execenv->user->input_addr) {
+				bo_dict[i].handle = execenv->user->input_bo;
+				bo_dict[i].addr = execenv->user->input_addr;
+				bo_dict[i].size = execenv->array_size * sizeof(float);
+				bo_dict[i].is_owner = false;
+			} else if (execenv->user && bo_dict[i].bo_type == BO_TYPE_OUTPUT &&
+				   execenv->user->output_addr) {
+				bo_dict[i].handle = execenv->user->output_bo;
+				bo_dict[i].addr = execenv->user->output_addr;
+				bo_dict[i].size = execenv->array_size * sizeof(float);
+				bo_dict[i].is_owner = false;
+			} else {
+				bo_dict[i].handle = xe_bo_create(fd, execenv->vm, bo_dict[i].size,
+								 placement, flags);
+			}
 
-			igt_debug("[i: %2d name: %20s] data: %p, addr: %16llx, size: %llx\n",
-				  i, bo_dict[i].name, bo_dict[i].data,
+			if (bo_dict[i].handle) {
+				xe_vm_bind_async(fd, vm, 0, bo_dict[i].handle, 0, bo_dict[i].addr,
+						 bo_dict[i].size, &sync, 1);
+				xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, exec_queue,
+					       INT64_MAX);
+			}
+
+			if (bo_dict[i].is_owner) {
+				bo_dict[i].data = xe_bo_map(fd, bo_dict[i].handle, bo_dict[i].size);
+				memset(bo_dict[i].data, 0, bo_dict[i].size);
+			}
+
+			igt_debug("[i: %2d name: %20s] data: %p, handle: %u, addr: %16llx, size: %llx\n",
+				  i, bo_dict[i].name, bo_dict[i].data, bo_dict[i].handle,
 				  (long long)bo_dict[i].addr,
 				  (long long)bo_dict[i].size);
 		}
@@ -356,11 +416,20 @@ static void bo_execenv_unbind(struct bo_execenv *execenv,
 
 		for (int i = 0; i < entries; i++) {
 			bo_sync->sync = 0;
-			xe_vm_unbind_async(fd, vm, 0, 0, bo_dict[i].addr, bo_dict[i].size, &sync, 1);
-			xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, exec_queue,
-				       INT64_MAX);
-			munmap(bo_dict[i].data, bo_dict[i].size);
-			gem_close(fd, bo_dict[i].handle);
+			if (bo_dict[i].is_owner) {
+				xe_vm_unbind_async(fd, vm, 0, 0, bo_dict[i].addr, bo_dict[i].size, &sync, 1);
+				xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, exec_queue,
+					       INT64_MAX);
+				munmap(bo_dict[i].data, bo_dict[i].size);
+			}
+			/* Keep user buffers intact */
+			if (execenv->user)
+				if ((execenv->user->input_bo && bo_dict[i].bo_type == BO_TYPE_INPUT) ||
+				    (execenv->user->output_bo && bo_dict[i].bo_type == BO_TYPE_OUTPUT))
+					continue;
+
+			if (bo_dict[i].handle)
+				gem_close(fd, bo_dict[i].handle);
 		}
 
 		munmap(bo_sync, bo_size);
@@ -863,9 +932,11 @@ static void compute_exec(int fd, const unsigned char *kernel,
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect data start" },
 		{ .addr = ADDR_INPUT,
-		  .name = "input" },
+		  .name = "input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "output" },
+		  .name = "output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_BATCH,
 		  .size = SIZE_BATCH,
 		  .name = "batch" },
@@ -895,8 +966,8 @@ static void compute_exec(int fd, const unsigned char *kernel,
 	create_indirect_data(bo_dict[3].data, bind_input_addr, bind_output_addr,
 			     IS_DG1(devid) ? 0x200 : 0x40, execenv.loop_count);
 
-	input_data = get_input_data(&execenv, user, bo_dict[4].data);
-	output_data = get_output_data(&execenv, user, bo_dict[5].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	if (IS_DG1(devid))
 		dg1_compute_exec_compute(bo_dict[6].data,
@@ -1144,9 +1215,11 @@ static void xehp_compute_exec(int fd, const unsigned char *kernel,
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT,
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_GENERAL_STATE_BASE,
 		  .size = SIZE_GENERAL_STATE,
 		  .name = "general state base" },
@@ -1184,8 +1257,8 @@ static void xehp_compute_exec(int fd, const unsigned char *kernel,
 				  execenv.loop_count);
 	xehp_create_surface_state(bo_dict[7].data, bind_input_addr, bind_output_addr);
 
-	input_data = get_input_data(&execenv, user, bo_dict[4].data);
-	output_data = get_output_data(&execenv, user, bo_dict[5].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	xehp_compute_exec_compute(fd,
 				  bo_dict[8].data,
@@ -1218,16 +1291,11 @@ static void xehpc_create_indirect_data(uint32_t *addr_bo_buffer_batch,
 	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_X;
 	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Y;
 	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Z;
-	addr_bo_buffer_batch[b++] = 0x00000000;
-	addr_bo_buffer_batch[b++] = 0x00000000;
 	addr_bo_buffer_batch[b++] = addr_input & 0xffffffff;
 	addr_bo_buffer_batch[b++] = addr_input >> 32;
 	addr_bo_buffer_batch[b++] = addr_output & 0xffffffff;
 	addr_bo_buffer_batch[b++] = addr_output >> 32;
 	addr_bo_buffer_batch[b++] = loop_count;
-	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_X;
-	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Y;
-	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Z;
 }
 
 static void xehpc_compute_exec_compute(int fd,
@@ -1301,7 +1369,7 @@ static void xehpc_compute_exec_compute(int fd,
 	addr_bo_buffer_batch[b++] = offset_indirect_data_start;
 	addr_bo_buffer_batch[b++] = 0xbe040000;
 	addr_bo_buffer_batch[b++] = 0xffffffff;
-	addr_bo_buffer_batch[b++] = 0x0000003f;
+	addr_bo_buffer_batch[b++] = 0x000003ff;
 	addr_bo_buffer_batch[b++] = 0x00000010;
 
 	addr_bo_buffer_batch[b++] = 0x00000001;
@@ -1365,9 +1433,11 @@ static void xehpc_compute_exec(int fd, const unsigned char *kernel,
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT,
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_GENERAL_STATE_BASE,
 		  .size = SIZE_GENERAL_STATE,
 		  .name = "general state base" },
@@ -1396,8 +1466,8 @@ static void xehpc_compute_exec(int fd, const unsigned char *kernel,
 	xehpc_create_indirect_data(bo_dict[1].data, bind_input_addr, bind_output_addr,
 				   execenv.loop_count);
 
-	input_data = get_input_data(&execenv, user, bo_dict[2].data);
-	output_data = get_output_data(&execenv, user, bo_dict[3].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	xehpc_compute_exec_compute(fd,
 				   bo_dict[5].data,
@@ -1694,6 +1764,13 @@ static void xe2lpg_compute_exec_compute(int fd,
 	addr_bo_buffer_batch[b++] = 0x00000000;
 	addr_bo_buffer_batch[b++] = 0x00000000;
 
+	addr_bo_buffer_batch[b++] = PIPE_CONTROL;
+	addr_bo_buffer_batch[b++] = 0x00100000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+
 	addr_bo_buffer_batch[b++] = MI_BATCH_BUFFER_END;
 }
 
@@ -1750,9 +1827,11 @@ static void xelpg_compute_exec(int fd, const unsigned char *kernel,
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT,
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_GENERAL_STATE_BASE,
 		  .size = SIZE_GENERAL_STATE,
 		  .name = "general state base" },
@@ -1793,8 +1872,8 @@ static void xelpg_compute_exec(int fd, const unsigned char *kernel,
 				   execenv.loop_count);
 	xehp_create_surface_state(bo_dict[7].data, bind_input_addr, bind_output_addr);
 
-	input_data = get_input_data(&execenv, user, bo_dict[4].data);
-	output_data = get_output_data(&execenv, user, bo_dict[5].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	xelpg_compute_exec_compute(bo_dict[8].data,
 				   ADDR_GENERAL_STATE_BASE,
@@ -1841,9 +1920,11 @@ static void xe2lpg_compute_exec(int fd, const unsigned char *kernel,
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT,
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_GENERAL_STATE_BASE,
 		  .size = SIZE_GENERAL_STATE,
 		  .name = "general state base" },
@@ -1881,8 +1962,8 @@ static void xe2lpg_compute_exec(int fd, const unsigned char *kernel,
 				   execenv.loop_count);
 	xehp_create_surface_state(bo_dict[7].data, bind_input_addr, bind_output_addr);
 
-	input_data = get_input_data(&execenv, user, bo_dict[4].data);
-	output_data = get_output_data(&execenv, user, bo_dict[5].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	xe2lpg_compute_exec_compute(fd,
 				    bo_dict[8].data,
@@ -1973,7 +2054,7 @@ static void xe3p_compute_exec_compute(int fd,
 	addr_bo_buffer_batch[b++] = 0x008004A0; /* dw3 */
 	addr_bo_buffer_batch[b++] = 0xBE040000; /* dw4 */
 	addr_bo_buffer_batch[b++] = 0xFFFFFFFF; /* dw5 */
-	addr_bo_buffer_batch[b++] = 0x000001FF; /* dw6 */
+	addr_bo_buffer_batch[b++] = 0x000003FF; /* dw6 */ // Local X/Y/Z Dimension
 
 	if (threadgroup_preemption)
 		addr_bo_buffer_batch[b++] = XE2_THREADGROUP_PREEMPT_XDIM; // Thread Group ID X Dimension
@@ -2000,7 +2081,7 @@ static void xe3p_compute_exec_compute(int fd,
 
 	addr_bo_buffer_batch[b++] = 0x00000000; /* dw22 */
 	addr_bo_buffer_batch[b++] = 0x00000000; /* dw23 */
-	addr_bo_buffer_batch[b++] = 0x0C000010; /* dw24 */
+	addr_bo_buffer_batch[b++] = 0x0C000000 | THREADS_PER_GROUP; /* dw24 */
 	addr_bo_buffer_batch[b++] = 0x00000000; /* dw25 */
 	addr_bo_buffer_batch[b++] = 0x00000400; /* dw26 */
 
@@ -2032,6 +2113,13 @@ static void xe3p_compute_exec_compute(int fd,
 	addr_bo_buffer_batch[b++] = 0x00000000; /* dw62 */
 	addr_bo_buffer_batch[b++] = 0x00000000; /* dw63 */
 
+	addr_bo_buffer_batch[b++] = PIPE_CONTROL;
+	addr_bo_buffer_batch[b++] = 0x00100000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+	addr_bo_buffer_batch[b++] = 0x00000000;
+
 	addr_bo_buffer_batch[b++] = MI_BATCH_BUFFER_END;
 }
 
@@ -2047,9 +2135,9 @@ static void xe3p_create_indirect_data(uint32_t *addr_bo_buffer_batch,
 	addr_bo_buffer_batch[b++] = addr_output & 0xffffffff;
 	addr_bo_buffer_batch[b++] = addr_output >> 32;
 	addr_bo_buffer_batch[b++] = loop_count;
-	addr_bo_buffer_batch[b++] = 0x00000200;
-	addr_bo_buffer_batch[b++] = 0x00000001;
-	addr_bo_buffer_batch[b++] = 0x00000001;
+	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_X;
+	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Y;
+	addr_bo_buffer_batch[b++] = ENQUEUED_LOCAL_SIZE_Z;
 	addr_bo_buffer_batch[b++] = 0x00000000;
 	addr_bo_buffer_batch[b++] = 0x00000000;
 	addr_bo_buffer_batch[b++] = 0x00000000;
@@ -2083,9 +2171,11 @@ static void xe3p_compute_exec(int fd, const unsigned char *kernel,
 		  .size =  0x1000,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT,
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT,
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_BATCH,
 		  .size = SIZE_BATCH,
 		  .name = "batch" },
@@ -2096,6 +2186,8 @@ static void xe3p_compute_exec(int fd, const unsigned char *kernel,
 	struct inline_data idata = {};
 	struct bo_execenv execenv;
 	float *input_data, *output_data;
+	uint64_t bind_input_addr = (user && user->input_addr) ? user->input_addr : ADDR_INPUT;
+	uint64_t bind_output_addr = (user && user->output_addr) ? user->output_addr : ADDR_OUTPUT;
 	uint64_t indirect_addr = ADDR_GENERAL_STATE_BASE + OFFSET_INDIRECT_DATA_START;
 	int entries = ARRAY_SIZE(bo_dict);
 	int64_t timeout_one_ns = 1;
@@ -2112,13 +2204,13 @@ static void xe3p_compute_exec(int fd, const unsigned char *kernel,
 	memcpy(bo_dict[0].data, kernel, size);
 	memset(bo_dict[1].data, 0, 4096);
 
-	xe3p_create_indirect_data(bo_dict[1].data, ADDR_INPUT, ADDR_OUTPUT,
+	xe3p_create_indirect_data(bo_dict[1].data, bind_input_addr, bind_output_addr,
 				  execenv.loop_count);
 	idata.xe3p.indirect_addr_lo = indirect_addr;
 	idata.xe3p.indirect_addr_hi = indirect_addr >> 32;
 
-	input_data = get_input_data(&execenv, user, bo_dict[2].data);
-	output_data = get_output_data(&execenv, user, bo_dict[3].data);
+	input_data = get_input_data(&execenv, bo_dict, entries);
+	output_data = get_output_data(&execenv, bo_dict, entries);
 
 	xe3p_compute_exec_compute(fd, &idata,
 				  bo_dict[4].data,
@@ -2140,7 +2232,7 @@ static void xe3p_compute_exec(int fd, const unsigned char *kernel,
 	}
 
 	if (!user || (user && !user->skip_results_check))
-		bo_check_square(input_data, output_data, execenv.array_size);
+		bo_check_square(input_data, output_data, execenv.loop_count);
 
 	bo_execenv_unbind(&execenv, bo_dict, entries);
 	bo_execenv_destroy(&execenv);
@@ -2204,6 +2296,11 @@ static const struct {
 	},
 	{
 		.ip_ver = IP_VER(30, 00),
+		.compute_exec = xe2lpg_compute_exec,
+		.compat = COMPAT_DRIVER_XE,
+	},
+	{
+		.ip_ver = IP_VER(30, 03),
 		.compute_exec = xe2lpg_compute_exec,
 		.compat = COMPAT_DRIVER_XE,
 	},
@@ -2407,9 +2504,11 @@ static void xe2lpg_compute_preempt_exec(int fd, const unsigned char *long_kernel
 		  .size = SIZE_INDIRECT_OBJECT,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT, .size = MAX(sizeof(float) * SIZE_DATA, 0x10000),
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT, .size = MAX(sizeof(float) * SIZE_DATA, 0x10000),
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_GENERAL_STATE_BASE,
 		  .size = SIZE_GENERAL_STATE,
 		  .name = "general state base" },
@@ -2552,9 +2651,11 @@ static void xe3p_compute_preempt_exec(int fd, const unsigned char *long_kernel,
 		  .size =  0x1000,
 		  .name = "indirect object base"},
 		{ .addr = ADDR_INPUT, .size = MAX(sizeof(float) * SIZE_DATA, 0x10000),
-		  .name = "addr input"},
+		  .name = "addr input",
+		  .bo_type = BO_TYPE_INPUT },
 		{ .addr = ADDR_OUTPUT, .size = MAX(sizeof(float) * SIZE_DATA, 0x10000),
-		  .name = "addr output" },
+		  .name = "addr output",
+		  .bo_type = BO_TYPE_OUTPUT },
 		{ .addr = ADDR_BATCH,
 		  .size = SIZE_BATCH,
 		  .name = "batch" },
@@ -2703,6 +2804,12 @@ static const struct {
 	},
 	{
 		.ip_ver = IP_VER(30, 00),
+		.compute_exec = xe2lpg_compute_preempt_exec,
+		.compat = COMPAT_DRIVER_XE,
+		.preempt_type = PREEMPT_TGP | PREEMPT_WMTP,
+	},
+	{
+		.ip_ver = IP_VER(30, 03),
 		.compute_exec = xe2lpg_compute_preempt_exec,
 		.compat = COMPAT_DRIVER_XE,
 		.preempt_type = PREEMPT_TGP | PREEMPT_WMTP,

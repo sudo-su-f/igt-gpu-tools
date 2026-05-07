@@ -31,7 +31,6 @@ typedef struct {
 	int drm_fd;
 	int width;
 	int height;
-	enum pipe pipe_id;
 	igt_display_t display;
 	igt_plane_t *primary;
 	igt_output_t *output;
@@ -64,12 +63,11 @@ static void test_init(data_t *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->crtc = igt_crtc_for_pipe(display, data->pipe_id);
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(display);
 
-	data->output = igt_get_single_output_for_pipe(display, data->pipe_id);
+	data->output = igt_get_single_output_for_crtc(data->crtc);
 	igt_assert(data->output);
 
 	if (data->output->config.connector->connector_type == DRM_MODE_CONNECTOR_eDP) {
@@ -347,7 +345,7 @@ static void bypass_8bpc_test(data_t *data)
 	 * Rx supports only up to 6bpc, Rx-crc will different from crtc-crc
 	 * with 8bpc.
 	 */
-	igt_skip_on_f(igt_get_output_max_bpc(data->drm_fd, data->output->name) <= 6,
+	igt_skip_on_f(igt_get_output_max_bpc(data->output) <= 6,
 		      "check /sys/kernel/debug/dri/0/eDP-1 (connector)/output_bpc\n");
 
 	igt_create_fb(data->drm_fd, data->width, data->height,

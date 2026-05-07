@@ -146,6 +146,7 @@ enum  cmd_error_type {
 	CMD_STREAM_EXEC_SUCCESS,
 	CMD_STREAM_EXEC_INVALID_OPCODE,
 	CMD_STREAM_EXEC_INVALID_PACKET_LENGTH,
+	CMD_STREAM_EXEC_INVALID_PACKET_LENGTH_OVERSIZE,
 	CMD_STREAM_EXEC_INVALID_PACKET_EOP_QUEUE,
 	CMD_STREAM_TRANS_BAD_REG_ADDRESS,
 	CMD_STREAM_TRANS_BAD_MEM_ADDRESS,
@@ -208,14 +209,71 @@ struct amdgpu_cs_err_codes {
 	int err_code_wait_for_fence;
 };
 
+/* aux struct to hold parameters for userqueue fence */
+struct amdgpu_userq_params {
+	uint64_t num_fences;
+	struct drm_amdgpu_userq_fence_info *fence_info;
+	uint64_t job_start_write_data_va_addr;
+	uint64_t job_start_write_data_val;
+};
+
+/**
+ * struct amdgpu_dma_limits - hardware transfer limits per IP block
+ *
+ * All sizes are in BYTES.  Packet builders convert internally
+ * (e.g. /4 for DWORD counts in SDMA inline data or GFX PACKET3).
+ *
+ * Queried once with amdgpu_dma_limits_query(), then passed to helpers.
+ */
+struct amdgpu_dma_limits {
+	uint64_t sdma_max_bytes;        /* max SDMA write/fill/copy per packet */
+	uint64_t gfx_max_bytes;         /* max GFX CP_DMA fill/copy per packet */
+	uint64_t compute_max_bytes;     /* max Compute CP_DMA per packet */
+
+	/* safe small sizes for quick smoke tests (bytes) */
+	uint64_t sdma_default_bytes;
+	uint64_t gfx_default_bytes;
+	uint64_t compute_default_bytes;
+};
+
+/**
+ * amdgpu_dma_max_bytes - return HW max transfer size for an IP type
+ */
+static inline uint64_t
+amdgpu_dma_max_bytes(const struct amdgpu_dma_limits *lim,
+		     unsigned int ip_type)
+{
+	switch (ip_type) {
+	case AMDGPU_HW_IP_DMA:     return lim->sdma_max_bytes;
+	case AMDGPU_HW_IP_GFX:     return lim->gfx_max_bytes;
+	case AMDGPU_HW_IP_COMPUTE: return lim->compute_max_bytes;
+	default:                    return lim->sdma_default_bytes;
+	}
+}
+
+/**
+ * amdgpu_dma_default_bytes - return safe small test size for an IP type
+ */
+static inline uint64_t
+amdgpu_dma_default_bytes(const struct amdgpu_dma_limits *lim,
+			 unsigned int ip_type)
+{
+	switch (ip_type) {
+	case AMDGPU_HW_IP_DMA:     return lim->sdma_default_bytes;
+	case AMDGPU_HW_IP_GFX:     return lim->gfx_default_bytes;
+	case AMDGPU_HW_IP_COMPUTE: return lim->compute_default_bytes;
+	default:                    return lim->sdma_default_bytes;
+	}
+}
+
 /* aux struct to hold misc parameters for convenience to maintain */
 struct amdgpu_ring_context {
 
 	int ring_id; /* ring_id from amdgpu_query_hw_ip_info */
 	int res_cnt; /* num of bo in amdgpu_bo_handle resources[2] */
 
-	uint32_t write_length;  /* length of data */
-	uint32_t write_length2; /* length of data for second packet */
+	uint64_t write_length;  /* transfer size in bytes */
+	uint64_t write_length2; /* transfer size in bytes, second packet */
 	uint32_t *pm4;		/* data of the packet */
 	uint32_t pm4_size;	/* max allocated packet size */
 	bool secure;		/* secure or not */
@@ -279,6 +337,8 @@ struct amdgpu_ring_context {
 	bool user_queue;
 	uint64_t time_out;
 	enum uq_submission_mode submit_mode;
+	uint32_t max_num_fences_fwm;
+	struct amdgpu_userq_params *userq_params;
 
 	struct drm_amdgpu_info_uq_fw_areas info;
 };

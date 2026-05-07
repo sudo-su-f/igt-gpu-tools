@@ -378,8 +378,8 @@ extern const char * const igt_plane_prop_names[];
  */
 extern const char * const igt_colorop_prop_names[];
 
-typedef struct igt_display igt_display_t;
-typedef struct igt_crtc igt_crtc_t;
+typedef struct _igt_display igt_display_t;
+typedef struct _igt_crtc igt_crtc_t;
 typedef uint32_t igt_fixed_t;			/* 16.16 fixed point */
 
 #define IGT_NUM_PLANE_COLOR_PIPELINES 4
@@ -409,9 +409,9 @@ static inline bool igt_rotation_90_or_270(igt_rotation_t rotation)
 	return rotation & (IGT_ROTATION_90 | IGT_ROTATION_270);
 }
 
-typedef struct igt_plane igt_plane_t;
+typedef struct _igt_plane igt_plane_t;
 
-typedef struct igt_colorop {
+typedef struct {
 	uint32_t id;
 	igt_plane_t *plane;
 
@@ -423,10 +423,10 @@ typedef struct igt_colorop {
 
 } igt_colorop_t;
 
-typedef struct igt_plane {
+typedef struct _igt_plane {
 	/*< private >*/
 	igt_crtc_t *crtc;
-	struct igt_plane *ref;
+	igt_plane_t *ref;
 	int index;
 	/* capabilities */
 	int type;
@@ -470,19 +470,10 @@ typedef struct igt_plane {
 /*
  * This struct represents a hardware pipe
  */
-struct igt_crtc {
+struct _igt_crtc {
 	igt_display_t *display;
 	/* ID of a hardware pipe */
 	enum pipe pipe;
-
-        /*
-         * Indicates whether this pipe struct is valid and can be used. This can
-         * be false when the pipe is allocated as part of an array indexed by
-         * enum pipe, but the respective pipe is not reported by DRM, meaning
-         * that the pipe could not exist in the underlying hardware, could have
-         * been fused off, etc.
-         */
-        bool valid;
 
 	int n_planes;
 	int num_primary_planes;
@@ -507,7 +498,7 @@ typedef struct {
 	struct kmstest_connector_config config;
 	char *name;
 	bool force_reprobe;
-	enum pipe pending_pipe;
+	igt_crtc_t *pending_crtc;
 	bool use_override_mode;
 	drmModeModeInfo override_mode;
 
@@ -520,7 +511,12 @@ typedef struct {
 	uint64_t values[IGT_NUM_CONNECTOR_PROPS];
 } igt_output_t;
 
-struct igt_display {
+typedef struct {
+	igt_output_t *output;
+	igt_crtc_t *crtc;
+} igt_output_crtc_t;
+
+struct _igt_display {
 	int drm_fd;
 	int log_shift;
 	int n_crtcs;
@@ -554,6 +550,9 @@ typedef struct {
 typedef struct {
 	int max;
 	int old;
+	int color_flag;
+	struct igt_fb green;
+	struct igt_fb red;
 	igt_output_t *output;
 	char path[PATH_MAX];
 	char backlight_dir_path[PATH_MAX];
@@ -570,22 +569,27 @@ void igt_display_commit_atomic(igt_display_t *display, uint32_t flags, void *use
 int  igt_display_try_commit2(igt_display_t *display, enum igt_commit_style s);
 int  igt_display_drop_events(igt_display_t *display);
 void igt_display_require_output(igt_display_t *display);
-void igt_display_require_output_on_pipe(igt_display_t *display, enum pipe pipe);
+void igt_display_require_output_on_crtc(igt_crtc_t *crtc);
 int igt_display_n_crtcs(igt_display_t *display);
 
 const char *igt_crtc_name(igt_crtc_t *crtc);
 
-static inline igt_crtc_t *igt_crtc_for_pipe(igt_display_t *display, enum pipe pipe)
-{
-	if (pipe == PIPE_NONE)
-		return NULL;
+igt_crtc_t *igt_crtc_for_crtc_id(igt_display_t *display, uint32_t crtc_id);
+igt_crtc_t *igt_crtc_for_crtc_index(igt_display_t *display, int crtc_index);
+igt_crtc_t *igt_crtc_for_pipe(igt_display_t *display, enum pipe pipe);
+igt_crtc_t *igt_first_crtc(igt_display_t *display);
+igt_crtc_t *igt_first_crtc_with_single_output(igt_display_t *display, igt_output_t **ret_output);
+igt_crtc_t *igt_next_crtc(igt_display_t *display, igt_crtc_t *crtc);
+igt_crtc_t *igt_random_crtc(igt_display_t *display);
 
-	return &display->crtcs[pipe];
-}
+uint32_t igt_crtc_get_vbl_flag(igt_crtc_t *crtc);
+unsigned int igt_crtc_get_vblank(igt_crtc_t *crtc, unsigned int flags);
 
 typedef struct _igt_pipe_crc igt_pipe_crc_t;
 igt_pipe_crc_t *igt_crtc_crc_new(igt_crtc_t *crtc, const char *source);
 igt_pipe_crc_t *igt_crtc_crc_new_nonblock(igt_crtc_t *crtc, const char *source);
+
+int igt_crtc_debugfs_dir(igt_crtc_t *crtc);
 
 igt_crtc_t *igt_output_get_driving_crtc(igt_output_t *output);
 const char *igt_output_name(igt_output_t *output);
@@ -613,7 +617,7 @@ int igt_crtc_count_plane_type(igt_crtc_t *crtc, int plane_type);
 igt_plane_t *igt_crtc_get_plane_type_index(igt_crtc_t *crtc, int plane_type,
 					   int index);
 bool output_is_internal_panel(igt_output_t *output);
-igt_output_t *igt_get_single_output_for_pipe(igt_display_t *display, enum pipe pipe);
+igt_output_t *igt_get_single_output_for_crtc(igt_crtc_t *crtc);
 
 void igt_crtc_request_out_fence(igt_crtc_t *crtc);
 
@@ -667,19 +671,6 @@ static inline bool igt_output_is_connected(igt_output_t *output)
 }
 
 /**
- * igt_pipe_connector_valid:
- * @pipe: pipe to check.
- * @output: #igt_output_t to check.
- *
- * Checks whether the given pipe and output can be used together.
- */
-static inline bool igt_pipe_connector_valid(enum pipe pipe, igt_output_t *output)
-{
-	return igt_output_is_connected(output) &&
-		output->config.valid_crtc_index_mask & (1 << (pipe));
-}
-
-/**
  * igt_crtc_connector_valid:
  * @crtc: CRTC to check.
  * @output: #igt_output_t to check.
@@ -689,7 +680,7 @@ static inline bool igt_pipe_connector_valid(enum pipe pipe, igt_output_t *output
 static inline bool igt_crtc_connector_valid(igt_crtc_t *crtc, igt_output_t *output)
 {
 	return igt_output_is_connected(output) &&
-		output->config.valid_crtc_index_mask & (1 << crtc->pipe);
+		output->config.valid_crtc_index_mask & (1 << crtc->crtc_index);
 }
 
 #define for_each_if(condition) if (!(condition)) {} else
@@ -701,9 +692,10 @@ static inline bool igt_crtc_connector_valid(igt_crtc_t *crtc, igt_output_t *outp
  *
  * This for loop iterates over all outputs.
  */
-#define for_each_output(display, output)		\
-	for (int i__ = 0;  assert(igt_can_fail()), i__ < (display)->n_outputs; i__++)	\
-		for_each_if (((output) = (&(display)->outputs[i__])))
+#define for_each_output(display, output) \
+	for ((output) = &(display)->outputs[0]; \
+	     (output) < &(display)->outputs[(display)->n_outputs]; \
+	     (output)++)
 
 /**
  * for_each_connected_output:
@@ -728,18 +720,6 @@ static inline bool igt_crtc_connector_valid(igt_crtc_t *crtc, igt_output_t *outp
 		for_each_if ((!(igt_output_is_connected((output)))))
 
 /**
- * for_each_pipe_static:
- * @pipe: The pipe to iterate.
- *
- * This for loop iterates over all pipes supported by IGT libraries.
- *
- * This should be used to enumerate per-pipe subtests since it has no runtime
- * depencies.
- */
-#define for_each_pipe_static(pipe) \
-	for (pipe = 0; pipe < IGT_MAX_PIPES; pipe++)
-
-/**
  * for_each_crtc:
  * @display: a pointer to an #igt_display_t structure
  * @crtc: The CRTC
@@ -753,8 +733,7 @@ static inline bool igt_crtc_connector_valid(igt_crtc_t *crtc, igt_output_t *outp
 #define for_each_crtc(display, crtc) \
 	for ((crtc) = &(display)->crtcs[0]; \
 	     (crtc) < &(display)->crtcs[(display)->n_crtcs]; \
-	     (crtc)++) \
-		for_each_if ((crtc)->valid)
+	     (crtc)++)
 
 /**
  * for_each_crtc_with_valid_output:
@@ -775,65 +754,79 @@ static inline bool igt_crtc_connector_valid(igt_crtc_t *crtc, igt_output_t *outp
 		     (output) < &(display)->outputs[(display)->n_outputs]; \
 	     (output) = (output) + 1 < &(display)->outputs[(display)->n_outputs] ? \
 		     (output) + 1 : ((crtc)++, &(display)->outputs[0])) \
-		for_each_if ((crtc)->valid && igt_crtc_connector_valid((crtc), (output)))
+		for_each_if (igt_crtc_connector_valid((crtc), (output)))
 
-igt_output_t **__igt_pipe_populate_outputs(igt_display_t *display,
-					   igt_output_t **chosen_outputs);
+igt_output_crtc_t *__igt_output_crtc_populate(igt_display_t *display,
+					      igt_output_crtc_t *chosen_outputs);
 
 /**
  * for_each_crtc_with_single_output:
  * @display: a pointer to an #igt_display_t structure
- * @crtc: The CRTC for which this @crtc / @output combination is valid.
- * @output: The output for which this @crtc / @output combination is valid.
+ * @_crtc: The CRTC for which this @_crtc / @_output combination is valid.
+ * @_output: The output for which this @_crtc / @_output combination is valid.
  *
  * This loop is called over all CRTCs, and will try to find a compatible output
  * for each CRTC. Unlike for_each_pipe_with_valid_output(), this function will
  * be called at most once for each pipe.
  */
-#define for_each_crtc_with_single_output(display, crtc, output) \
-	for (igt_output_t *__outputs[igt_display_n_crtcs(display)], \
-	     **__output = __igt_pipe_populate_outputs((display), __outputs); \
+#define for_each_crtc_with_single_output(display, _crtc, _output) \
+	for (igt_output_crtc_t __outputs[igt_display_n_crtcs(display)], \
+	     *__output = __igt_output_crtc_populate((display), __outputs); \
 		 __output < &__outputs[igt_display_n_crtcs(display)]; __output++) \
-		for_each_if (*__output && \
-			     ((crtc) = igt_crtc_for_pipe((display), (__output - __outputs)), (output) = *__output, 1))
+		for_each_if (__output->output && __output->crtc && \
+			     ((_output) = __output->output, (_crtc) = __output->crtc, 1))
 
 /**
- * for_each_valid_output_on_pipe:
+ * for_each_valid_output_on_crtc:
  * @display: a pointer to an #igt_display_t structure
- * @pipe: Pipe to enumerate valid outputs over
+ * @crtc: CRTC to enumerate valid outputs over
  * @output: The enumerated output.
  *
  * This for loop is called over all connected @output that can be used
- * on this @pipe . If there are no valid outputs for this pipe, nothing
+ * on this @crtc . If there are no valid outputs for this CRTC, nothing
  * happens.
  */
-#define for_each_valid_output_on_pipe(display, pipe, output) \
+#define for_each_valid_output_on_crtc(display, crtc, output) \
 	for_each_connected_output((display), (output)) \
-		for_each_if (igt_pipe_connector_valid((pipe), (output)))
+		for_each_if (igt_crtc_connector_valid((crtc), (output)))
 
 /**
- * for_each_plane_on_pipe:
- * @display: a pointer to an #igt_display_t structure
- * @pipe: Pipe to enumerate valid outputs over
+ * for_each_plane_on_crtc:
+ * @crtc: CRTC to enumerate valid outputs over
  * @plane: The enumerated plane.
  *
- * This for loop iterates over all planes associated to the given @pipe.
- * If there are no valid planes for this pipe, nothing happens.
+ * This for loop iterates over all planes associated to the given @crtc.
+ * If there are no valid planes for this CRTC, nothing happens.
  */
-#define for_each_plane_on_pipe(display, pipe, plane)			\
+#define for_each_plane_on_crtc(crtc, plane) \
 	for (int j__ = 0; assert(igt_can_fail()), \
-		     (plane) = &igt_crtc_for_pipe((display), (pipe))->planes[j__], \
-		     j__ < igt_crtc_for_pipe((display), (pipe))->n_planes; j__++)
+		     (plane) = &(crtc)->planes[j__], \
+		     j__ < (crtc)->n_planes; j__++)
 
 /**
  * for_each_connector_mode:
  * @output: Output to enumerate available modes.
+ * @mode: The enumerated mode.
  *
  * This for loop iterates over all modes associated to the given @output.
  * If there are no mode available for this output, nothing happens.
  */
-#define for_each_connector_mode(output)		\
-	for (int j__ = 0;  j__ < output->config.connector->count_modes; j__++)
+#define for_each_connector_mode(output, mode) \
+	for ((mode) = &(output)->config.connector->modes[0]; \
+	     (mode) < &(output)->config.connector->modes[(output)->config.connector->count_modes]; \
+	     (mode)++)
+
+/**
+ * for_each_plane_format:
+ * @plane: a pointer to an #igt_plane_t structure
+ * @format: format iterator
+ *
+ * This for loop iterates over all formats supported by @plane.
+ */
+#define for_each_plane_format(plane, format) \
+	for (int __i = 0; __i < (plane)->drm_plane->count_formats; __i++) \
+		for_each_if (((format) = (plane)->drm_plane->formats[__i], \
+			      1))
 
 #define IGT_FIXED(i,f)	((i) << 16 | (f))
 
@@ -1238,31 +1231,19 @@ int igt_connector_sysfs_open(int drm_fd,
 uint32_t igt_reduce_format(uint32_t format);
 
 
-/*
- * igt_require_pipe:
- * @display: pointer to igt_display_t
- * @pipe: pipe which need to check
- *
- * Skip a (sub-)test if the pipe not valid.
- *
- * Should be used everywhere where a test checks pipe and skip
- * test when pipe is not valid.
- */
-void igt_require_pipe(igt_display_t *display,
-		enum pipe pipe);
-
 void igt_dump_connectors_fd(int drmfd);
 void igt_dump_crtcs_fd(int drmfd);
 bool igt_override_all_active_output_modes_to_fit_bw(igt_display_t *display);
 bool igt_fit_modes_in_bw(igt_display_t *display);
 bool igt_has_lobf_debugfs(int drmfd, igt_output_t *output);
 bool igt_get_i915_edp_lobf_status(int drmfd, char *connector_name);
-unsigned int igt_get_output_max_bpc(int drmfd, char *connector_name);
-unsigned int igt_get_pipe_current_bpc(int drmfd, enum pipe pipe);
-void igt_assert_output_bpc_equal(int drmfd, enum pipe pipe,
-				char *output_name, unsigned int bpc);
-bool igt_check_output_bpc_equal(int drmfd, enum pipe pipe,
-				char *output_name, unsigned int bpc);
+bool igt_is_aux_less_alpm_enabled(int drmfd, char *connector_name);
+unsigned int igt_get_output_max_bpc(igt_output_t *output);
+unsigned int igt_get_crtc_current_bpc(igt_crtc_t *crtc);
+void igt_assert_output_bpc_equal(igt_crtc_t *crtc, igt_output_t *output,
+				 unsigned int bpc);
+bool igt_check_output_bpc_equal(igt_crtc_t *crtc, igt_output_t *output,
+				unsigned int bpc);
 
 int sort_drm_modes_by_clk_dsc(const void *a, const void *b);
 int sort_drm_modes_by_clk_asc(const void *a, const void *b);
@@ -1271,8 +1252,8 @@ int sort_drm_modes_by_res_asc(const void *a, const void *b);
 void igt_sort_connector_modes(drmModeConnector *connector,
 		int (*comparator)(const void *, const void*));
 
-bool igt_max_bpc_constraint(igt_display_t *display, enum pipe pipe,
-		igt_output_t *output, int bpc);
+bool igt_max_bpc_constraint(igt_display_t *display, igt_crtc_t *crtc,
+			    igt_output_t *output, int bpc);
 int igt_get_max_dotclock(int fd);
 int igt_get_max_cdclk(int fd);
 int igt_get_current_cdclk(int fd);
@@ -1286,6 +1267,7 @@ bool igt_ultrajoiner_possible(int drmfd, drmModeModeInfo *mode, int max_dotclock
 bool ultrajoiner_mode_found(int drm_fd, drmModeConnector *connector,
 			  int max_dotclock, drmModeModeInfo *mode);
 bool igt_has_force_joiner_debugfs(int drmfd, char *conn_name);
+drmModeModeInfo *igt_get_non_joiner_mode(int drm_fd, igt_output_t *output);
 bool is_joiner_mode(int drm_fd, igt_output_t *output);
 bool igt_check_force_joiner_status(int drmfd, char *connector_name);
 bool igt_check_bigjoiner_support(igt_display_t *display);
@@ -1293,7 +1275,7 @@ bool igt_parse_mode_string(const char *mode_string, drmModeModeInfo *mode);
 bool intel_pipe_output_combo_valid(igt_display_t *display);
 bool igt_check_output_is_dp_mst(igt_output_t *output);
 int igt_get_dp_mst_connector_id(igt_output_t *output);
-int get_num_scalers(igt_display_t *display, enum pipe pipe);
+int igt_crtc_num_scalers(igt_crtc_t *crtc);
 int igt_get_current_lane_count(int drm_fd, igt_output_t *output);
 int igt_get_current_link_rate(int drm_fd, igt_output_t *output);
 int igt_get_max_link_rate(int drm_fd, igt_output_t *output);

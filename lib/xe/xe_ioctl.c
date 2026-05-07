@@ -332,6 +332,11 @@ void xe_vm_unbind_sync(int fd, uint32_t vm, uint64_t offset,
 	__xe_vm_bind_sync(fd, vm, 0, offset, addr, size, DRM_XE_VM_BIND_OP_UNMAP);
 }
 
+void xe_vm_get_property(int fd, uint32_t vm, struct drm_xe_vm_get_property *query)
+{
+	igt_assert_eq(igt_ioctl(fd, DRM_IOCTL_XE_VM_GET_PROPERTY, query), 0);
+}
+
 void xe_vm_destroy(int fd, uint32_t vm)
 {
 	struct drm_xe_vm_destroy destroy = {
@@ -579,6 +584,52 @@ void *xe_bo_map_fixed(int fd, uint32_t bo, size_t size, uint64_t addr)
 	return map;
 }
 
+/**
+ * xe_bo_map_aligned: Maps a buffer object (bo) into CPU address space with a specified alignment
+ * @fd: The device file-descriptor
+ * @bo: The buffer object
+ * @size: The size of the map
+ * @alignment: The requested map alignment
+ *
+ * This function reserves a virtual memory range, computes the first aligned address,
+ * maps the buffer object at that address, and asserts on errors. It unmaps any unused
+ * regions before and after the mapped buffer, freeing up memory and leaving only the
+ * aligned mapping.
+ *
+ * Return: Pointer to CPU-Mapped BO with requested alignment
+ */
+void *xe_bo_map_aligned(int fd, uint32_t bo, size_t size, size_t alignment)
+{
+	size_t anon_size = size + alignment;
+	uint64_t anon_addr;
+	void *anon_map, *map;
+	uint64_t map_addr;
+	size_t hole_size;
+
+	/* Reserve a range of virtual space where we can fit an aligned map */
+	anon_map = mmap(NULL, anon_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	igt_assert(anon_map != MAP_FAILED);
+	anon_addr = to_user_pointer(anon_map);
+
+	/* Compute the first aligned address within the virtual space. */
+	map_addr = ALIGN(anon_addr, alignment);
+	/* Map the bo there, replacing part of the reserved virtual range. */
+	map = xe_bo_map_fixed(fd, bo, size, map_addr);
+	igt_assert_eq((uintptr_t)map % alignment, 0);
+
+	/* Unreserve part of the virtual range (if any) *before* the bo map */
+	hole_size = map_addr - anon_addr;
+	if (hole_size)
+		igt_assert_eq(munmap(anon_map, hole_size), 0);
+
+	/* Unreserve part of the virtual range (if any) *after* the bo map */
+	hole_size = anon_size - hole_size - size;
+	if (hole_size)
+		igt_assert_eq(munmap(map + size, hole_size), 0);
+
+	return map;
+}
+
 void *xe_bo_mmap_ext(int fd, uint32_t bo, size_t size, int prot)
 {
 	return __xe_bo_map(fd, bo, size, prot);
@@ -739,6 +790,9 @@ int __xe_vm_madvise(int fd, uint32_t vm, uint64_t addr, uint64_t range,
 	case DRM_XE_MEM_RANGE_ATTR_PAT:
 		madvise.pat_index.val = op_val;
 		break;
+	case DRM_XE_VMA_ATTR_PURGEABLE_STATE:
+		/* Purgeable state handled by xe_vm_madvise_purgeable */
+		return -EINVAL;
 	default:
 		igt_warn("Unknown attribute\n");
 		return -EINVAL;
@@ -775,24 +829,69 @@ void xe_vm_madvise(int fd, uint32_t vm, uint64_t addr, uint64_t range,
 				      instance), 0);
 }
 
-#define	BIND_SYNC_VAL	0x686868
-void xe_vm_bind_lr_sync(int fd, uint32_t vm, uint32_t bo, uint64_t offset,
-			uint64_t addr, uint64_t size, uint32_t flags)
+/**
+ * xe_vm_madvise_purgeable:
+ * @fd: xe device fd
+ * @vm_id: vm_id of the virtual range
+ * @start: start of the virtual address range
+ * @range: size of the virtual address range
+ * @state: purgeable state (DRM_XE_VMA_PURGEABLE_STATE_WILLNEED or DONTNEED)
+ *
+ * Sets the purgeable state for a virtual memory range. This allows applications
+ * to hint to the kernel about buffer object usage patterns for better memory management.
+ *
+ * Returns: retained value (1 if backing store exists, 0 if purged)
+ */
+uint32_t xe_vm_madvise_purgeable(int fd, uint32_t vm_id, uint64_t start,
+				 uint64_t range, uint32_t state)
 {
-	volatile uint64_t *sync_addr = malloc(sizeof(*sync_addr));
+	uint32_t retained_val = 0;
+	struct drm_xe_madvise madvise = {
+		.vm_id = vm_id,
+		.start = start,
+		.range = range,
+		.type = DRM_XE_VMA_ATTR_PURGEABLE_STATE,
+		.purge_state_val.val = state,
+		.purge_state_val.retained_ptr = (uint64_t)(uintptr_t)&retained_val,
+	};
+
+	igt_assert_eq(igt_ioctl(fd, DRM_IOCTL_XE_MADVISE, &madvise), 0);
+	return retained_val;
+}
+
+#define	BIND_SYNC_VAL	0x686868
+int __xe_vm_bind_lr_sync(int fd, uint32_t vm, uint32_t bo, uint64_t offset,
+			 uint64_t addr, uint64_t size, uint32_t flags)
+{
+	uint64_t *sync_addr = malloc(sizeof(*sync_addr));
 	struct drm_xe_sync sync = {
 		.flags = DRM_XE_SYNC_FLAG_SIGNAL,
 		.type = DRM_XE_SYNC_TYPE_USER_FENCE,
-		.addr = to_user_pointer((uint64_t *)sync_addr),
+		.addr = to_user_pointer(sync_addr),
 		.timeline_value = BIND_SYNC_VAL,
 	};
+	int ret = 0;
 
-	igt_assert(!!sync_addr);
-	xe_vm_bind_async_flags(fd, vm, 0, bo, 0, addr, size, &sync, 1, flags);
-	if (*sync_addr != BIND_SYNC_VAL)
-		xe_wait_ufence(fd, (uint64_t *)sync_addr, BIND_SYNC_VAL, 0, NSEC_PER_SEC * 10);
+	if (!sync_addr)
+		return -ENOMEM;
+	WRITE_ONCE(*sync_addr, 0);
+	ret = __xe_vm_bind(fd, vm, 0, bo, offset, addr, size, DRM_XE_VM_BIND_OP_MAP, flags,
+			   &sync, 1, 0,  DEFAULT_PAT_INDEX, 0);
+	if (ret)
+		goto out;
+
+	if (READ_ONCE(*sync_addr) != BIND_SYNC_VAL)
+		xe_wait_ufence(fd, sync_addr, BIND_SYNC_VAL, 0, NSEC_PER_SEC * 10);
 	/* Only free if the wait succeeds */
-	free((void *)sync_addr);
+out:
+	free(sync_addr);
+	return ret;
+}
+
+void xe_vm_bind_lr_sync(int fd, uint32_t vm, uint32_t bo, uint64_t offset,
+			uint64_t addr, uint64_t size, uint32_t flags)
+{
+	igt_assert_eq(__xe_vm_bind_lr_sync(fd, vm, bo, offset, addr, size, flags), 0);
 }
 
 void xe_vm_unbind_lr_sync(int fd, uint32_t vm, uint64_t offset,

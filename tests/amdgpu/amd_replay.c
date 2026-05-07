@@ -26,7 +26,6 @@ struct test_data {
 	igt_fb_t ref_fb;
 	igt_fb_t ref_fb2;
 	igt_fb_t *flip_fb;
-	enum pipe pipe_id;
 	int fd;
 	int debugfs_fd;
 	int w, h;
@@ -61,12 +60,11 @@ static void test_init(struct test_data *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->crtc = igt_crtc_for_pipe(display, data->pipe_id);
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(display);
 
-	data->output = igt_get_single_output_for_pipe(display, data->pipe_id);
+	data->output = igt_get_single_output_for_crtc(data->crtc);
 	igt_require(data->output);
 	igt_info("output %s\n", data->output->name);
 

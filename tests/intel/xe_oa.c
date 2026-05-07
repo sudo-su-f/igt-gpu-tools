@@ -359,6 +359,7 @@ static const char *oa_unit_name[] = {
 	[DRM_XE_OA_UNIT_TYPE_OAG] = "oag",
 	[DRM_XE_OA_UNIT_TYPE_OAM] = "oam",
 	[DRM_XE_OA_UNIT_TYPE_OAM_SAG] = "sag",
+	[DRM_XE_OA_UNIT_TYPE_MERT] = "mert",
 };
 
 /* Wrapper to deconstify @inst for xe_exec_queue_create */
@@ -381,6 +382,8 @@ static struct intel_xe_perf_metric_set *oa_unit_metric_set(const struct drm_xe_o
 		 (oau->oa_unit_type == DRM_XE_OA_UNIT_TYPE_OAM ||
 		  oau->oa_unit_type == DRM_XE_OA_UNIT_TYPE_OAM_SAG))
 		test_set_name = "MediaSet1";
+	else if (oau->oa_unit_type == DRM_XE_OA_UNIT_TYPE_MERT)
+		test_set_name = "MertExtSet";
 	else
 		igt_assert_f(!"reached", "Unknown oa_unit_type %d\n", oau->oa_unit_type);
 
@@ -2757,12 +2760,6 @@ test_enable_disable(const struct drm_xe_oa_unit *oau)
 	stream_fd = __perf_open(drm_fd, &param, true /* prevent_pm */);
 	set_fd_flags(stream_fd, O_CLOEXEC | O_NONBLOCK);
 
-	errno = 0;
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
 	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_ENABLE, 0);
 
 	/*
@@ -2779,6 +2776,32 @@ test_enable_disable(const struct drm_xe_oa_unit *oau)
 		;
 	get_stream_status(stream_fd);
 	igt_assert_eq(ret, sizeof(buf));
+
+	/* Wait again for more reports */
+	pollfd.fd = stream_fd;
+	pollfd.events = POLLIN;
+	poll(&pollfd, 1, -1);
+	igt_assert(pollfd.revents & POLLIN);
+
+	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_DISABLE, 0);
+
+	/*
+	 * Ensure some reports can be read even with disabled stream. These
+	 * can be less than WAIT_NUM_REPORTS, if pollin was left set in the
+	 * kernel after the previous read (since read buffer is small)
+	 */
+	while ((ret = read(stream_fd, buf, sizeof(buf))) < 0 && errno == EINTR)
+		;
+	get_stream_status(stream_fd);
+	igt_assert_lt(0, ret);
+
+	/* In non-blocking mode read till we see a -EAGAIN, signifying all available data is read */
+	set_fd_flags(stream_fd, O_CLOEXEC | O_NONBLOCK);
+	while ((ret = read(stream_fd, buf, sizeof(buf))) > 0 ||
+	       (ret == -1 && (errno == EINTR || errno == EIO)))
+		;
+	igt_assert_eq(ret, -1);
+	igt_assert_eq(errno, EAGAIN);
 
 	__perf_close(stream_fd);
 }
@@ -2923,75 +2946,6 @@ test_non_sampling_read_error(void)
 	igt_assert_eq(ret, -1);
 	get_stream_status(stream_fd);
 	igt_assert_eq(errno, EINVAL);
-
-	__perf_close(stream_fd);
-}
-
-/**
- * SUBTEST: disabled-read-error
- * Description: Test that attempts to read from a stream while it is disable
- *		will return EINVAL instead of blocking indefinitely
- */
-static void
-test_disabled_read_error(void)
-{
-	int oa_exponent = 5; /* 5 micro seconds */
-	uint64_t properties[] = {
-		DRM_XE_OA_PROPERTY_OA_UNIT_ID, 0,
-
-		/* XXX: even without periodic sampling we have to
-		 * specify at least one sample layout property...
-		 */
-		DRM_XE_OA_PROPERTY_SAMPLE_OA, true,
-
-		/* OA unit configuration */
-		DRM_XE_OA_PROPERTY_OA_METRIC_SET, default_test_set->perf_oa_metrics_set,
-		DRM_XE_OA_PROPERTY_OA_FORMAT, __ff(default_test_set->perf_oa_format),
-		DRM_XE_OA_PROPERTY_OA_PERIOD_EXPONENT, oa_exponent,
-		DRM_XE_OA_PROPERTY_OA_DISABLED, true,
-	};
-	struct intel_xe_oa_open_prop param = {
-		.num_properties = ARRAY_SIZE(properties) / 2,
-		.properties_ptr = to_user_pointer(properties),
-	};
-	uint32_t oa_report0[64];
-	uint32_t oa_report1[64];
-	uint32_t buf[128] = { 0 };
-	int ret;
-
-	stream_fd = __perf_open(drm_fd, &param, false);
-
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
-	__perf_close(stream_fd);
-
-	properties[ARRAY_SIZE(properties) - 1] = false; /* Set DISABLED to false */
-	stream_fd = __perf_open(drm_fd, &param, false);
-        set_fd_flags(stream_fd, O_CLOEXEC);
-
-	read_2_oa_reports(default_test_set->perf_oa_format,
-			  oa_exponent,
-			  oa_report0,
-			  oa_report1,
-			  false); /* not just timer reports */
-
-	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_DISABLE, 0);
-
-	ret = read(stream_fd, buf, sizeof(buf));
-	igt_assert_eq(ret, -1);
-	get_stream_status(stream_fd);
-	igt_assert_eq(errno, EINVAL);
-
-	do_ioctl(stream_fd, DRM_XE_OBSERVATION_IOCTL_ENABLE, 0);
-
-	read_2_oa_reports(default_test_set->perf_oa_format,
-			  oa_exponent,
-			  oa_report0,
-			  oa_report1,
-			  false); /* not just timer reports */
 
 	__perf_close(stream_fd);
 }
@@ -4442,7 +4396,7 @@ static void *map_oa_buffer(u32 *size)
 {
 	void *vaddr = mmap(0, default_oa_buffer_size, PROT_READ, MAP_PRIVATE, stream_fd, 0);
 
-	igt_assert(vaddr != NULL);
+	igt_assert(vaddr != MAP_FAILED);
 	*size = default_oa_buffer_size;
 	return vaddr;
 }
@@ -5154,8 +5108,6 @@ int igt_main_args("b:t", long_options, help_str, opt_handler, NULL)
 			test_non_zero_reason(oau, SZ_128K);
 	}
 
-	igt_subtest("disabled-read-error")
-		test_disabled_read_error();
 	igt_subtest("non-sampling-read-error")
 		test_non_sampling_read_error();
 

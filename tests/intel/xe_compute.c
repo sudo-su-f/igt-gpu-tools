@@ -495,8 +495,8 @@ test_eu_busy(uint64_t duration_sec)
 
 /**
  * SUBTEST: compute-square
- * Mega feature: WMTP
- * Sub-category: wmtp tests
+ * Mega feature: Compute
+ * Sub-category: compute tests
  * Functionality: OpenCL kernel
  * GPU requirement: TGL, PVC, LNL, PTL
  * Description:
@@ -508,6 +508,163 @@ test_compute_square(int fd)
 {
 	igt_require_f(run_intel_compute_kernel(fd, NULL, EXECENV_PREF_SYSTEM),
 		      "GPU not supported\n");
+}
+
+/**
+ * SUBTEST: compute-square-userenv
+ * Mega feature: Compute
+ * Sub-category: compute tests
+ * Functionality: OpenCL kernel
+ * Description:
+ *	Run an openCL Kernel that returns output[i] = input[i] * input[i],
+ *	taking buffers from userenv.
+ *
+ * SUBTEST: compute-square-userenv-large-buffer
+ * Mega feature: Compute
+ * Sub-category: compute tests
+ * Functionality: OpenCL kernel
+ * Description:
+ *	Run an openCL Kernel that returns output[i] = input[i] * input[i],
+ *	taking large buffers from userenv.
+ *
+ * SUBTEST: compute-square-userenv-isvm
+ * Mega feature: Compute
+ * Sub-category: compute tests
+ * Functionality: OpenCL kernel
+ * Description:
+ *	Run an openCL Kernel that returns output[i] = input[i] * input[i],
+ *	taking buffers from userenv where input is svm buffer.
+ *
+ * SUBTEST: compute-square-userenv-osvm
+ * Mega feature: Compute
+ * Sub-category: compute tests
+ * Functionality: OpenCL kernel
+ * Description:
+ *	Run an openCL Kernel that returns output[i] = input[i] * input[i],
+ *	taking buffers from userenv where output buffer is svm buffer.
+ *
+ * SUBTEST: compute-square-userenv-iosvm
+ * Mega feature: Compute
+ * Sub-category: compute tests
+ * Functionality: OpenCL kernel
+ * Description:
+ *	Run an openCL Kernel that returns output[i] = input[i] * input[i],
+ *	taking buffers from userenv where input and output buffers are svm buffer.
+ */
+
+#define INPUT_IN_SVM		(1 << 0)
+#define OUTPUT_IN_SVM		(1 << 1)
+#define LARGE_BUFFER		(1 << 2)
+#define LARGE_BUFFER_SIZE	(SZ_2M + SZ_1M)
+#define INPUT_BO_ADDR		0x30000000
+#define OUTPUT_BO_ADDR		0x31000000
+#define USER_FENCE_VALUE	0xdeadbeefdeadbeefull
+#define FIVE_SEC		(5LL * NSEC_PER_SEC)
+
+#define bind_system_allocator(__sync, __num_sync)			\
+	__xe_vm_bind_assert(fd, vm, 0,					\
+			    0, 0, 0, 0x1ull << va_bits,			\
+			    DRM_XE_VM_BIND_OP_MAP,			\
+			    DRM_XE_VM_BIND_FLAG_CPU_ADDR_MIRROR,	\
+			    (__sync), (__num_sync), 0, 0)
+
+static void
+test_compute_square_userenv(int fd, uint32_t flags)
+{
+	struct user_execenv env = {};
+	uint32_t input_bo, output_bo, vm, size = SZ_4K;
+	uint32_t vm_flags = DRM_XE_VM_CREATE_FLAG_LR_MODE;
+	int va_bits = xe_va_bits(fd);
+	float *input, *output;
+	int i;
+
+	if (flags & LARGE_BUFFER)
+		size = LARGE_BUFFER_SIZE;
+	size = ALIGN(size, xe_get_default_alignment(fd));
+	env.array_size = size / sizeof(float);
+
+	if ((flags & INPUT_IN_SVM) || (flags & OUTPUT_IN_SVM))
+		vm_flags |= DRM_XE_VM_CREATE_FLAG_FAULT_MODE;
+	vm = env.vm = xe_vm_create(fd, vm_flags, 0);
+
+	if ((flags & INPUT_IN_SVM) || (flags & OUTPUT_IN_SVM)) {
+		struct drm_xe_sync sync = {
+			.type = DRM_XE_SYNC_TYPE_USER_FENCE,
+			.flags = DRM_XE_SYNC_FLAG_SIGNAL,
+			.timeline_value = USER_FENCE_VALUE,
+		};
+		struct bo_sync {
+			uint64_t sync;
+		} *bo_sync;
+
+		bo_sync = aligned_alloc(xe_get_default_alignment(fd), sizeof(*bo_sync));
+		igt_assert(bo_sync);
+		sync.addr = to_user_pointer(&bo_sync->sync);
+		bind_system_allocator(&sync, 1);
+		xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, 0, FIVE_SEC);
+		free(bo_sync);
+	}
+
+	if (flags & INPUT_IN_SVM) {
+		input = aligned_alloc(xe_get_default_alignment(fd), size);
+		env.input_addr = to_user_pointer(input);
+
+	} else {
+		input_bo = xe_bo_create(fd, env.vm, size, vram_if_possible(fd, 0),
+					DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM);
+		input = xe_bo_map(fd, input_bo, size);
+		env.input_bo = input_bo;
+		env.input_addr = INPUT_BO_ADDR;
+	}
+
+	if (flags & OUTPUT_IN_SVM) {
+		output = aligned_alloc(xe_get_default_alignment(fd), size);
+		env.output_addr = to_user_pointer(output);
+	} else {
+		output_bo = xe_bo_create(fd, env.vm, size, vram_if_possible(fd, 0),
+					 DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM);
+		output = xe_bo_map(fd, output_bo, size);
+		env.output_bo = output_bo;
+		env.output_addr = OUTPUT_BO_ADDR;
+	}
+
+	if (flags == LARGE_BUFFER)
+		env.loop_count = env.array_size;
+	else
+		env.loop_count = env.array_size / 2;
+
+	/* Skip check in the library and verify user controls data locally */
+	env.skip_results_check = true;
+
+	for (i = 0; i < env.array_size; i++)
+		input[i] = (float)i + 2.0f;
+
+	run_intel_compute_kernel(fd, &env, EXECENV_PREF_SYSTEM);
+
+	for (i = 0; i < env.loop_count; i++) {
+		float expected_output = input[i] * input[i];
+
+		if (output[i] != expected_output || output[i] == 0.0f)
+			igt_debug("[%4d] input:%f output:%f expected_output:%f\n",
+				  i, input[i], output[i], expected_output);
+		igt_assert_eq_double(output[i], expected_output);
+	}
+
+	if (flags & INPUT_IN_SVM) {
+		free(input);
+	} else {
+		munmap(input, size);
+		gem_close(fd, input_bo);
+	}
+
+	if (flags & OUTPUT_IN_SVM) {
+		free(output);
+	} else {
+		munmap(output, size);
+		gem_close(fd, output_bo);
+	}
+
+	xe_vm_destroy(fd, env.vm);
 }
 
 int igt_main()
@@ -524,6 +681,21 @@ int igt_main()
 
 	igt_subtest("compute-square")
 		test_compute_square(xe);
+
+	igt_subtest("compute-square-userenv")
+		test_compute_square_userenv(xe, 0);
+
+	igt_subtest("compute-square-userenv-large-buffer")
+		test_compute_square_userenv(xe, LARGE_BUFFER);
+
+	igt_subtest("compute-square-userenv-isvm")
+		test_compute_square_userenv(xe, INPUT_IN_SVM);
+
+	igt_subtest("compute-square-userenv-osvm")
+		test_compute_square_userenv(xe, OUTPUT_IN_SVM);
+
+	igt_subtest("compute-square-userenv-iosvm")
+		test_compute_square_userenv(xe, INPUT_IN_SVM | OUTPUT_IN_SVM);
 
 	igt_fixture()
 		drm_close_driver(xe);

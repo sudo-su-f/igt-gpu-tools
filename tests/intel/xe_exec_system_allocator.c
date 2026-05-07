@@ -1216,7 +1216,7 @@ xe_vm_madvise_migrate_pages(int fd, uint32_t vm, uint64_t addr, uint64_t range)
 		      DRM_XE_MIGRATE_ALL_PAGES, 0);
 }
 
-static void
+static bool
 xe_vm_parse_execute_madvise(int fd, uint32_t vm, struct test_exec_data *data,
 			    size_t bo_size,
 			    struct drm_xe_engine_class_instance *eci,
@@ -1312,33 +1312,64 @@ xe_vm_parse_execute_madvise(int fd, uint32_t vm, struct test_exec_data *data,
 	if (flags & MADVISE_PAT_INDEX) {
 		uint32_t num_ranges;
 		struct drm_xe_mem_range_attr *mem_attrs;
+		uint8_t pat_idx = pat_value(fd);
+		bool is_uc_pat = (pat_value == intel_get_pat_idx_wt ||
+				  pat_value == intel_get_pat_idx_uc ||
+				  pat_value == intel_get_pat_idx_uc_comp);
+		int err;
 
 		if (bo_size)
 			bo_size = ALIGN(bo_size, SZ_4K);
 
+		if (is_uc_pat && !xe_has_vram(fd)) {
+			/* UC PAT should be rejected by kernel for CPU cached memory (iGPU only) */
+			if (flags & MADVISE_MULTI_VMA) {
+				err = __xe_vm_madvise(fd, vm, to_user_pointer(data) + bo_size,
+						      bo_size / 2, 0, DRM_XE_MEM_RANGE_ATTR_PAT,
+						      pat_idx, 0, 0);
+				igt_assert_eq(err, -EINVAL);
+
+				err = __xe_vm_madvise(fd, vm, to_user_pointer(data), bo_size,
+						      0, DRM_XE_MEM_RANGE_ATTR_PAT,
+						      pat_idx, 0, 0);
+				igt_assert_eq(err, -EINVAL);
+
+				err = __xe_vm_madvise(fd, vm, to_user_pointer(data) + bo_size / 2,
+						      bo_size / 4, 0, DRM_XE_MEM_RANGE_ATTR_PAT,
+						      pat_idx, 0, 0);
+				igt_assert_eq(err, -EINVAL);
+			} else {
+				err = __xe_vm_madvise(fd, vm, to_user_pointer(data), bo_size,
+						      0, DRM_XE_MEM_RANGE_ATTR_PAT, pat_idx, 0, 0);
+				igt_assert_eq(err, -EINVAL);
+			}
+			return true;  /* Skip exec for UC PAT tests on iGPU */
+		}
+
 		if (flags & MADVISE_MULTI_VMA) {
 			xe_vm_madvixe_pat_attr(fd, vm, to_user_pointer(data) + bo_size,
-					       bo_size / 2, pat_value(fd));
+					       bo_size / 2, pat_idx);
 			xe_vm_madvixe_pat_attr(fd, vm, to_user_pointer(data), bo_size,
-					       pat_value(fd));
+					       pat_idx);
 			xe_vm_madvixe_pat_attr(fd, vm, to_user_pointer(data) + bo_size / 2,
-					       bo_size / 4, pat_value(fd));
+					       bo_size / 4, pat_idx);
 		} else {
 			xe_vm_madvixe_pat_attr(fd, vm, to_user_pointer(data), bo_size,
-					       pat_value(fd));
+					       pat_idx);
 		}
 
 		mem_attrs = xe_vm_get_mem_attr_values_in_range(fd, vm, addr, bo_size, &num_ranges);
 		if (!mem_attrs) {
 			igt_debug("Failed to get memory attributes\n");
-			return;
+			return false;
 		}
 
 		for (uint32_t i = 0; i < num_ranges; i++)
-			igt_assert_eq_u32(mem_attrs[i].pat_index.val, pat_value(fd));
+			igt_assert_eq_u32(mem_attrs[i].pat_index.val, pat_idx);
 
 		free(mem_attrs);
 	}
+	return false;
 }
 
 static void
@@ -1560,8 +1591,9 @@ test_exec(int fd, struct drm_xe_engine_class_instance *eci,
 	addr = to_user_pointer(data);
 
 	if (flags & MADVISE_OP)
-		xe_vm_parse_execute_madvise(fd, vm, data, bo_size, eci, addr, flags, sync,
-					    pat_value);
+		if (xe_vm_parse_execute_madvise(fd, vm, data, bo_size, eci, addr, flags, sync,
+						pat_value))
+			goto cleanup;
 
 	if (flags & BO_UNMAP) {
 		bo_flags = DRM_XE_GEM_CREATE_FLAG_NEEDS_VISIBLE_VRAM;
@@ -1971,8 +2003,11 @@ cleanup:
 		gem_close(fd, bo);
 	}
 
-	munmap(bind_ufence, SZ_4K);
-	gem_close(fd, bind_sync);
+	if (bind_ufence)
+		munmap(bind_ufence, SZ_4K);
+
+	if (bind_sync)
+		gem_close(fd, bind_sync);
 
 	if (flags & BUSY)
 		igt_assert_eq(unbind_system_allocator(), -EBUSY);
@@ -2211,6 +2246,24 @@ processes(int fd, int n_exec_queues, int n_execs, size_t bo_size,
 		reset_nr_hugepages();
 }
 
+struct xe_gt_stats_snapshot {
+	int svm_4K_pagefault_us;
+	int svm_64K_pagefault_us;
+	int svm_2M_pagefault_us;
+};
+
+static void read_gt_stats_snapshot(int fd,
+				   struct drm_xe_engine_class_instance *eci,
+				   struct xe_gt_stats_snapshot *snapshot)
+{
+	snapshot->svm_4K_pagefault_us =
+		xe_gt_stats_get_count(fd, eci->gt_id, "svm_4K_pagefault_us");
+	snapshot->svm_64K_pagefault_us =
+		xe_gt_stats_get_count(fd, eci->gt_id, "svm_64K_pagefault_us");
+	snapshot->svm_2M_pagefault_us =
+		xe_gt_stats_get_count(fd, eci->gt_id, "svm_2M_pagefault_us");
+}
+
 /* compute flags */
 #define TOUCH_ONCE		(0x1 << 0)
 #define ACCESS_DEVICE_HOST	(0x1 << 1)
@@ -2240,7 +2293,8 @@ processes(int fd, int n_exec_queues, int n_execs, size_t bo_size,
  * @range-device-host:				touch the whole buffer, from the device then from the host
  */
 static void
-test_compute(int fd, size_t size, unsigned int flags)
+test_compute(int fd, struct drm_xe_engine_class_instance *eci, size_t size,
+	     unsigned int flags, int loops)
 {
 	struct drm_xe_sync sync = {
 		.type = DRM_XE_SYNC_TYPE_USER_FENCE,
@@ -2258,7 +2312,7 @@ test_compute(int fd, size_t size, unsigned int flags)
 		.array_size = size / sizeof(float),
 	};
 	float *compute_input;
-	int i;
+	struct xe_gt_stats_snapshot stats_before, stats_after;
 
 	vm = xe_vm_create(fd, DRM_XE_VM_CREATE_FLAG_LR_MODE | DRM_XE_VM_CREATE_FLAG_FAULT_MODE, 0);
 	bo_sync = aligned_alloc(xe_get_default_alignment(fd), sizeof(*bo_sync));
@@ -2266,20 +2320,51 @@ test_compute(int fd, size_t size, unsigned int flags)
 	bind_system_allocator(&sync, 1);
 	xe_wait_ufence(fd, &bo_sync->sync, USER_FENCE_VALUE, 0, FIVE_SEC);
 
-	compute_input = aligned_alloc(SZ_2M, size);
-	igt_assert(compute_input);
-
 	env.loop_count = (flags & TOUCH_ONCE) ? 1 : env.array_size;
 	env.skip_results_check = !(flags & ACCESS_DEVICE_HOST);
-	env.input_addr = to_user_pointer(compute_input);
 	env.vm = vm;
 
-	for (i = 0; i < env.loop_count; i++)
-		compute_input[i] = rand() / (float)RAND_MAX;
+	read_gt_stats_snapshot(fd, eci, &stats_before);
 
-	run_intel_compute_kernel(fd, &env, EXECENV_PREF_SYSTEM);
+	for (int i = 0; i < loops; i++) {
+		/*
+		 * What is done below for the input buffer could also be done for the output
+		 * buffer, that is system allocation with aligned_alloc() then setting it into
+		 * user_execenv. However the current focus of this test is to provide fine
+		 * control on triggering GPU page faults from the context of a compute kernel
+		 * (execution units) unlike test_exec(), so using SVM for the input buffer only
+		 * is sufficient and simpler.
+		 */
+		compute_input = aligned_alloc(size, size);
+		igt_assert(compute_input);
+		env.input_addr = to_user_pointer(compute_input);
 
-	free(compute_input);
+		for (int j = 0; j < env.array_size; j++)
+			compute_input[j] = rand() / (float)RAND_MAX;
+
+		xe_run_intel_compute_kernel_on_engine(fd, eci, &env, EXECENV_PREF_SYSTEM);
+
+		free(compute_input);
+	}
+
+	read_gt_stats_snapshot(fd, eci, &stats_after);
+
+	if (flags & TOUCH_ONCE) {
+		if (size == SZ_4K) {
+			igt_info("  svm_4K_pagefault_us=%d\n",
+				 (stats_after.svm_4K_pagefault_us -
+				  stats_before.svm_4K_pagefault_us) / loops);
+		} else if (size == SZ_64K) {
+			igt_info("  svm_64K_pagefault_us=%d\n",
+				 (stats_after.svm_64K_pagefault_us -
+				  stats_before.svm_64K_pagefault_us) / loops);
+		} else if (size == SZ_2M) {
+			igt_info("  svm_2M_pagefault_us=%d\n",
+				 (stats_after.svm_2M_pagefault_us -
+				  stats_before.svm_2M_pagefault_us) / loops);
+		}
+	}
+
 	unbind_system_allocator();
 	xe_vm_destroy(fd, vm);
 }
@@ -2289,6 +2374,13 @@ struct section {
 	unsigned long long flags;
 	uint8_t (*fn)(int pat);
 };
+
+static int getenv_int(const char *var, int def_val)
+{
+	char *env = getenv(var);
+
+	return env ? atoi(env) : def_val;
+}
 
 int igt_main()
 {
@@ -2460,7 +2552,8 @@ int igt_main()
 		{ NULL },
 	};
 
-	int fd;
+	int fd, svm_compute_loops = getenv_int("IGT_SVM_COMPUTE_LOOPS", 1);
+	uint16_t dev_id;
 
 	igt_fixture() {
 		struct xe_device *xe;
@@ -2471,6 +2564,7 @@ int igt_main()
 		xe = xe_device_get(fd);
 		va_bits = xe->va_bits;
 		open_sync_file();
+		dev_id = intel_get_drm_devid(fd);
 	}
 
 	for (const struct section *s = sections; s->name; s++) {
@@ -2671,21 +2765,32 @@ int igt_main()
 			     !xe_has_vram(fd)) {
 				igt_skip("Skipping compression-related PAT index\n");
 			}
+			if (IS_PONTEVECCHIO(dev_id) &&
+			    strstr(s->name, "madvise-pat-idx-uc-comp-"))
+				igt_skip("Skipping compression-related PAT index on PVC\n");
 			xe_for_each_engine(fd, hwe)
 				test_exec(fd, hwe, 1, 1, SZ_4M, 0, 0, NULL, NULL, s->flags, s->fn);
 		}
 	}
 
 	igt_subtest("compute")
-		test_compute(fd, SZ_2M, 0);
+		xe_for_each_engine(fd, hwe)
+			if (hwe->engine_class == DRM_XE_ENGINE_CLASS_COMPUTE)
+				test_compute(fd, hwe, SZ_2M, 0, svm_compute_loops);
 
 	for (const struct section *s = csections; s->name; s++) {
 		igt_subtest_f("eu-fault-4k-%s", s->name)
-			test_compute(fd, SZ_4K, s->flags);
+			xe_for_each_engine(fd, hwe)
+				if (hwe->engine_class == DRM_XE_ENGINE_CLASS_COMPUTE)
+					test_compute(fd, hwe, SZ_4K, s->flags, svm_compute_loops);
 		igt_subtest_f("eu-fault-64k-%s", s->name)
-			test_compute(fd, SZ_64K, s->flags);
+			xe_for_each_engine(fd, hwe)
+				if (hwe->engine_class == DRM_XE_ENGINE_CLASS_COMPUTE)
+					test_compute(fd, hwe, SZ_64K, s->flags, svm_compute_loops);
 		igt_subtest_f("eu-fault-2m-%s", s->name)
-			test_compute(fd, SZ_2M, s->flags);
+			xe_for_each_engine(fd, hwe)
+				if (hwe->engine_class == DRM_XE_ENGINE_CLASS_COMPUTE)
+					test_compute(fd, hwe, SZ_2M, s->flags, svm_compute_loops);
 	}
 
 	igt_fixture() {

@@ -35,10 +35,38 @@
 	for (p = 0, port = data.ports[p]; p < data.port_count; \
 	     p++, port = data.ports[p])
 
-#define connector_subtest(name__, type__)                           \
-	igt_subtest(name__)                                         \
-	for_each_port(p, port) if (chamelium_port_get_type(port) == \
-				   DRM_MODE_CONNECTOR_##type__)
+/**
+ * connector_subtest() - Run a subtest for all ports of a given connector type
+ *
+ * Defines a subtest that iterates over all available Chamelium ports and
+ * executes the provided test function for each port matching the requested
+ * connector type. If no matching port is found, the subtest is skipped
+ * cleanly.
+ *
+ * This helper avoids repeated connector-iteration logic and provides a
+ * consistent pattern for running connector-specific tests.
+ */
+
+#define connector_subtest(name__, connector_type__, data__, test_fn__, ...)		\
+	do {										\
+		igt_subtest(name__) {							\
+			int p__;							\
+			struct chamelium_port *port__;					\
+			bool found__ = false;						\
+			for_each_port(p__, port__) {					\
+				if (chamelium_port_get_type(port__) !=			\
+					DRM_MODE_CONNECTOR_##connector_type__)		\
+					continue;					\
+				igt_info("%s: testing port %s\n", name__,		\
+					 chamelium_port_get_name(port__));		\
+				found__ = true;						\
+				test_fn__(data__, port__, ##__VA_ARGS__);		\
+			}								\
+			if (!found__)							\
+				igt_skip(#connector_type__				\
+					" connector not available");			\
+			}								\
+	} while (0)									\
 
 /*
  * The chamelium data structure is used to store all the information known about
@@ -69,7 +97,7 @@ igt_output_t *chamelium_prepare_output(chamelium_data_t *data,
 void chamelium_enable_output(chamelium_data_t *data,
 			     struct chamelium_port *port, igt_output_t *output,
 			     drmModeModeInfo *mode, struct igt_fb *fb);
-enum pipe chamelium_get_pipe_for_output(igt_display_t *display,
+igt_crtc_t * chamelium_get_pipe_for_output(igt_display_t *display,
 					igt_output_t *output);
 
 int chamelium_get_pattern_fb(chamelium_data_t *data, size_t width,

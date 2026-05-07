@@ -6,6 +6,7 @@
  *    Matthew Brost <matthew.brost@intel.com>
  */
 
+#include <fcntl.h>
 #include <stdlib.h>
 #include <pthread.h>
 
@@ -19,8 +20,10 @@
 #endif
 
 #include "drmtest.h"
+#include "igt_debugfs.h"
 #include "ioctl_wrappers.h"
 #include "igt_map.h"
+#include "intel_pat.h"
 
 #include "xe_query.h"
 #include "xe_ioctl.h"
@@ -133,26 +136,83 @@ static uint32_t __mem_default_alignment(struct drm_xe_query_mem_regions *mem_reg
 	return alignment;
 }
 
-/**
- * xe_engine_class_supports_multi_queue:
- * @engine_class: engine class
+/*
+ * parse_engine_class_mask - parse a space-separated list of engine class names
+ * into a bitmask indexed by DRM_XE_ENGINE_CLASS_* values.
  *
- * Returns true if multi queue supported by engine class or false.
+ * @names: the engine class names string, e.g. " vcs vecs" or "bcs ccs"
+ *
+ * The kernel debugfs "info" output for multi_lrc_engine_classes and
+ * multi_queue_engine_classes uses the same short names as
+ * xe_engine_class_short_string(): "rcs", "bcs", "vcs", "vecs", "ccs".
+ *
+ * Returns the bitmask, or 0 if no known class names were found.
  */
-bool xe_engine_class_supports_multi_queue(uint32_t engine_class)
+static uint16_t parse_engine_class_mask(const char *names)
 {
-	switch (engine_class) {
-		case DRM_XE_ENGINE_CLASS_COPY:
-		case DRM_XE_ENGINE_CLASS_COMPUTE:
-			return true;
-		case DRM_XE_ENGINE_CLASS_RENDER:
-		case DRM_XE_ENGINE_CLASS_VIDEO_DECODE:
-		case DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE:
-			return false;
-		default:
-			igt_warn("Engine class 0x%x unknown\n", engine_class);
-			return false;
+	static const struct {
+		const char *name;
+		uint32_t engine_class;
+	} class_map[] = {
+		{ "rcs",    DRM_XE_ENGINE_CLASS_RENDER },
+		{ "bcs",    DRM_XE_ENGINE_CLASS_COPY },
+		{ "vcs",    DRM_XE_ENGINE_CLASS_VIDEO_DECODE },
+		{ "vecs",   DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE },
+		{ "ccs",    DRM_XE_ENGINE_CLASS_COMPUTE },
+	};
+	uint16_t mask = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(class_map); i++) {
+		if (strstr(names, class_map[i].name))
+			mask |= BIT(class_map[i].engine_class);
 	}
+
+	return mask;
+}
+
+/*
+ * Read the debugfs "info" file and OR together the engine class bitmasks from
+ * every line that contains @key.  Returns UINT16_MAX if @key is not found
+ * (kernel too old to expose this information).
+ *
+ * multi_lrc_engine_classes is printed once at device level; multi_queue_engine_classes
+ * is printed once per GT, so the OR handles the multi-GT case transparently.
+ */
+static uint16_t xe_device_query_engine_class_mask(int fd, const char *key)
+{
+	char *line = NULL;
+	size_t line_len = 0;
+	uint16_t mask = UINT16_MAX;
+	size_t key_len = strlen(key);
+	int dbgfs_fd;
+	FILE *dbgfs_file;
+
+	dbgfs_fd = igt_debugfs_open(fd, "info", O_RDONLY);
+	if (dbgfs_fd < 0)
+		return mask;
+
+	dbgfs_file = fdopen(dbgfs_fd, "r");
+	if (!dbgfs_file) {
+		close(dbgfs_fd);
+		return mask;
+	}
+
+	while (getline(&line, &line_len, dbgfs_file) != -1) {
+		const char *p = strstr(line, key);
+
+		if (!p)
+			continue;
+
+		if (mask == UINT16_MAX)
+			mask = 0;
+		mask |= parse_engine_class_mask(p + key_len);
+	}
+
+	free(line);
+	fclose(dbgfs_file);
+
+	return mask;
 }
 
 /**
@@ -226,6 +286,66 @@ static struct xe_device *find_in_cache(int fd)
 	return xe_dev;
 }
 
+/**
+ * xe_engine_class_supports_multi_lrc:
+ * @fd: xe device fd
+ * @engine_class: engine class
+ *
+ * Returns true if multi LRC supported by engine class or false.
+ * Uses the kernel-reported bitmask from debugfs when available, otherwise
+ * falls back to the hardcoded per-class default.
+ */
+bool xe_engine_class_supports_multi_lrc(int fd, uint32_t engine_class)
+{
+	struct xe_device *xe_dev = find_in_cache(fd);
+
+	if (xe_dev && xe_dev->multi_lrc_mask != UINT16_MAX)
+		return !!(xe_dev->multi_lrc_mask & BIT(engine_class));
+
+	switch (engine_class) {
+	case DRM_XE_ENGINE_CLASS_COPY:
+	case DRM_XE_ENGINE_CLASS_COMPUTE:
+	case DRM_XE_ENGINE_CLASS_RENDER:
+		return false;
+	case DRM_XE_ENGINE_CLASS_VIDEO_DECODE:
+	case DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE:
+		return true;
+	default:
+		igt_warn("Engine class 0x%x unknown\n", engine_class);
+		return false;
+	}
+}
+
+/**
+ * xe_engine_class_supports_multi_queue:
+ * @fd: xe device fd
+ * @engine_class: engine class
+ *
+ * Returns true if multi queue supported by engine class or false.
+ * Uses the kernel-reported bitmask from debugfs when available, otherwise
+ * falls back to the hardcoded per-class default.
+ */
+bool xe_engine_class_supports_multi_queue(int fd, uint32_t engine_class)
+{
+	struct xe_device *xe_dev = find_in_cache(fd);
+
+	if (xe_dev && xe_dev->multi_queue_engine_class_mask != UINT16_MAX)
+		return !!(xe_dev->multi_queue_engine_class_mask & BIT(engine_class));
+
+	switch (engine_class) {
+	case DRM_XE_ENGINE_CLASS_COPY:
+	case DRM_XE_ENGINE_CLASS_COMPUTE:
+		return true;
+	case DRM_XE_ENGINE_CLASS_RENDER:
+	case DRM_XE_ENGINE_CLASS_VIDEO_DECODE:
+	case DRM_XE_ENGINE_CLASS_VIDEO_ENHANCE:
+		return false;
+	default:
+		igt_warn("Engine class 0x%x unknown\n", engine_class);
+		return false;
+	}
+}
+
 static void xe_device_free(struct xe_device *xe_dev)
 {
 	free(xe_dev->config);
@@ -235,6 +355,7 @@ static void xe_device_free(struct xe_device *xe_dev)
 	free(xe_dev->mem_regions);
 	free(xe_dev->vram_size);
 	free(xe_dev->eu_stall);
+	free(xe_dev->pat_cache);
 	free(xe_dev);
 }
 
@@ -299,6 +420,24 @@ struct xe_device *xe_device_get(int fd)
 	xe_dev->default_alignment = __mem_default_alignment(xe_dev->mem_regions);
 	xe_dev->has_vram = __mem_has_vram(xe_dev->mem_regions);
 
+	/*
+	 * Populate the PAT cache while we still have sufficient privileges
+	 * to read debugfs.  Forked children that inherit this xe_device
+	 * (via fork()) will be able to use the cached values even after
+	 * dropping root with igt_drop_root(). pat_cache is left NULL if
+	 * debugfs is not accessible.
+	 *
+	 * FIXME: the cache is keyed by fd; for multi-GPU support this
+	 * should be extended to cache PAT entries by platform version/
+	 * revision instead.
+	 */
+	xe_dev->pat_cache = calloc(1, sizeof(*xe_dev->pat_cache));
+	igt_assert(xe_dev->pat_cache);
+	if (xe_get_pat_sw_config(xe_dev->fd, xe_dev->pat_cache, 0) <= 0) {
+		free(xe_dev->pat_cache);
+		xe_dev->pat_cache = NULL;
+	}
+
 	/* We may get here from multiple threads, use first cached xe_dev */
 	pthread_mutex_lock(&cache.cache_mutex);
 	prev = find_in_cache_unlocked(fd);
@@ -309,6 +448,11 @@ struct xe_device *xe_device_get(int fd)
 		xe_dev = prev;
 	}
 	pthread_mutex_unlock(&cache.cache_mutex);
+
+	xe_dev->multi_lrc_mask =
+		xe_device_query_engine_class_mask(fd, "multi_lrc_engine_classes");
+	xe_dev->multi_queue_engine_class_mask =
+		xe_device_query_engine_class_mask(fd, "multi_queue_engine_classes");
 
 	return xe_dev;
 }

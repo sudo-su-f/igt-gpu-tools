@@ -60,6 +60,12 @@ install: build/build.ninja
 uninstall: build/build.ninja
 	\$(Q)ninja -C build uninstall \$(quiet_build)
 
+install-completions: all
+	./scripts/bash_autocompletion/install_completions.sh --local-install
+
+uninstall-completions: all
+	./scripts/bash_autocompletion/install_completions.sh --local-uninstall
+
 docs:
 	\$(Q)ninja -C build igt-gpu-tools-doc \$(quiet_build)
 

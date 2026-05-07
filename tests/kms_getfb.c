@@ -129,10 +129,11 @@ static bool has_getfb_iface(int fd)
 /**
  * Find and return an arbitrary valid property ID.
  */
-static uint32_t get_any_prop_id(struct igt_display *display)
+static uint32_t get_any_prop_id(igt_display_t *display)
 {
-	for (int i = 0; i < display->n_outputs; i++) {
-		igt_output_t *output = &display->outputs[i];
+	igt_output_t *output;
+
+	for_each_output(display, output) {
 		if (output->props[IGT_CONNECTOR_DPMS] != 0)
 			return output->props[IGT_CONNECTOR_DPMS];
 	}
@@ -140,7 +141,7 @@ static uint32_t get_any_prop_id(struct igt_display *display)
 	return 0;
 }
 
-static void test_handle_input(struct igt_display *display)
+static void test_handle_input(igt_display_t *display)
 {
 	struct igt_fb fb;
 
@@ -196,7 +197,7 @@ static void test_handle_input(struct igt_display *display)
 		igt_remove_fb(display->drm_fd, &fb);
 }
 
-static void test_duplicate_handles(struct igt_display *display)
+static void test_duplicate_handles(igt_display_t *display)
 {
 	struct igt_fb fb;
 
@@ -256,7 +257,7 @@ static void test_duplicate_handles(struct igt_display *display)
 		igt_remove_fb(display->drm_fd, &fb);
 }
 
-static void test_getfb2(struct igt_display *display)
+static void test_getfb2(igt_display_t *display)
 {
 	struct igt_fb fb;
 

@@ -6,7 +6,11 @@
 #include "sw_sync.h"
 #include "kms_colorop_helper.h"
 
+#ifdef ANDROID
+#include "android/glib.h"
+#else
 #include <glib.h>
+#endif
 
 /**
  * TEST: kms colorop
@@ -47,9 +51,9 @@
  * @pq_125_inv_eotf:			PQ Inverse EOTF for [0.0, 125.0] optical range
  * @pq_125_eotf-pq_125_inv_eotf:	PQ EOTF -> PQ Inverse EOTF with [0.0, 125.0] optical range
  * @pq_125_eotf-pq_125_inv_eotf-pq_125_eotf: PQ EOTF -> PQ Inverse EOTF -> PQ EOTF with [0.0, 125.0] optical range
- * @gamma_2_2_inv_oetf:			Gamma 2.2 Inverse OETF
- * @gamma_2_2_inv_oetf-gamma_2_2_oetf:	Gamma 2.2 Inverse OETF -> Gamma 2.2 OETF
- * @gamma_2_2_inv_oetf-gamma_2_2_oetf-gamma_2_2_inv_oetf: Gamma 2.2 Inverse OETF -> Gamma 2.2 OETF -> Gamma 2.2 Inverse OETF
+ * @gamma_2_2:				Gamma 2.2
+ * @gamma_2_2-gamma_2_2_inv:		Gamma 2.2 -> Gamma 2.2 Inverse
+ * @gamma_2_2-gamma_2_2_inv-gamma_2_2:	Gamma 2.2 -> Gamma 2.2 Inverse -> Gamma 2.2
  * @ctm_3x4_50_desat:			3x4 matrix doing a 50% desaturation
  * @ctm_3x4_overdrive:			3x4 matrix overdring all values by 50%
  * @ctm_3x4_oversaturate:		3x4 matrix oversaturating values
@@ -125,7 +129,7 @@ static data_t data;
 
 static igt_output_t *kms_writeback_get_output(igt_display_t *display, __u32 fourcc_in, __u32 fourcc_out)
 {
-	int i;
+	igt_output_t *output;
 	igt_crtc_t *crtc;
 
 	drmModeModeInfo override_mode = {
@@ -145,9 +149,7 @@ static igt_output_t *kms_writeback_get_output(igt_display_t *display, __u32 four
 		.name = {"640x480-60"},
 	};
 
-	for (i = 0; i < display->n_outputs; i++) {
-		igt_output_t *output = &display->outputs[i];
-
+	for_each_output(display, output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_WRITEBACK)
 			continue;
 
@@ -156,9 +158,9 @@ static igt_output_t *kms_writeback_get_output(igt_display_t *display, __u32 four
 					    crtc);
 
 			if (check_writeback_config(display, output, override_mode, fourcc_in, fourcc_out)) {
-				igt_debug("Using connector %u:%s on pipe %d\n",
+				igt_debug("Using connector %u:%s on pipe %s\n",
 					  output->config.connector->connector_id,
-					  output->name, crtc->pipe);
+					  output->name, igt_crtc_name(crtc));
 				return output;
 			}
 		}
@@ -304,7 +306,8 @@ static void check_plane_colorop_ids(igt_display_t *display)
 	GHashTable *id_set = g_hash_table_new(g_direct_hash, g_direct_equal);
 
 	for_each_crtc(display, crtc) {
-		for_each_plane_on_pipe(display, crtc->pipe, plane) {
+		for_each_plane_on_crtc(crtc,
+				       plane) {
 			/* Skip when a drm_plane is already scanned */
 			if (g_hash_table_contains(plane_set, GINT_TO_POINTER(plane->drm_plane->plane_id)))
 				continue;
@@ -377,9 +380,9 @@ int igt_main_args("d", long_options, help_str, opt_handler, NULL)
 		{ { &kms_colorop_pq_125_inv_eotf, NULL }, "pq_125_inv_eotf" },
 		{ { &kms_colorop_pq_125_eotf, &kms_colorop_pq_125_inv_eotf, NULL }, "pq_125_eotf-pq_125_inv_eotf" },
 		{ { &kms_colorop_pq_125_eotf, &kms_colorop_pq_125_inv_eotf, &kms_colorop_pq_125_eotf_2, NULL }, "pq_125_eotf-pq_125_inv_eotf-pq_125_eotf" },
-		{ { &kms_colorop_gamma_22_inv_oetf, NULL }, "gamma_2_2_inv_oetf" },
-		{ { &kms_colorop_gamma_22_inv_oetf, &kms_colorop_gamma_22_oetf, NULL }, "gamma_2_2_inv_oetf-gamma_2_2_oetf" },
-		{ { &kms_colorop_gamma_22_inv_oetf, &kms_colorop_gamma_22_oetf, &kms_colorop_gamma_22_inv_oetf, NULL }, "gamma_2_2_inv_oetf-gamma_2_2_oetf-gamma_2_2_inv_oetf" },
+		{ { &kms_colorop_gamma_22_oetf, NULL }, "gamma_2_2" },
+		{ { &kms_colorop_gamma_22_oetf, &kms_colorop_gamma_22_inv_oetf, NULL }, "gamma_2_2-gamma_2_2_inv" },
+		{ { &kms_colorop_gamma_22_oetf, &kms_colorop_gamma_22_inv_oetf, &kms_colorop_gamma_22_oetf, NULL }, "gamma_2_2-gamma_2_2_inv-gamma_2_2" },
 		{ { &kms_colorop_ctm_3x4_50_desat, NULL }, "ctm_3x4_50_desat" },
 		{ { &kms_colorop_ctm_3x4_overdrive, NULL }, "ctm_3x4_overdrive" },
 		{ { &kms_colorop_ctm_3x4_oversaturate, NULL }, "ctm_3x4_oversaturate" },
@@ -415,14 +418,10 @@ int igt_main_args("d", long_options, help_str, opt_handler, NULL)
 		igt_require_f(!ret, "error setting DRM_CLIENT_CAP_WRITEBACK_CONNECTORS\n");
 
 		igt_display_require(&display, display.drm_fd);
-		if (drmSetClientCap(display.drm_fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1) == 0)
-			display.has_plane_color_pipeline = 1;
 
 		kmstest_set_vt_graphics_mode();
 
 		igt_display_require(&display, display.drm_fd);
-		if (drmSetClientCap(display.drm_fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1) == 0)
-			display.has_plane_color_pipeline = 1;
 
 		igt_require(display.is_atomic);
 	}

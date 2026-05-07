@@ -3258,10 +3258,8 @@ void igt_vlog(const char *domain, enum igt_log_level level, const char *format, 
 	pthread_mutex_lock(&print_mutex);
 
 	/* use stderr for warning messages and above */
-	if (level >= IGT_LOG_WARN) {
+	if (level >= IGT_LOG_WARN)
 		file = stderr;
-		fflush(stdout);
-	}
 	else
 		file = stdout;
 
@@ -3272,6 +3270,13 @@ void igt_vlog(const char *domain, enum igt_log_level level, const char *format, 
 	} else {
 		_log_line_fprintf(file, "%s%s", thread_id, line);
 	}
+
+	/* Ensure output is flushed explicitly, as concurrent test threads
+	 * may otherwise cause messages to be dropped or reordered.
+	 * Runner uses sockets so it's not needed there.
+	 */
+	if (!runner_connected())
+		fflush(file);
 
 	pthread_mutex_unlock(&print_mutex);
 

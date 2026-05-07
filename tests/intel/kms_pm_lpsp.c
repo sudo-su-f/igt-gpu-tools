@@ -62,7 +62,7 @@ typedef struct {
 	igt_display_t display;
 	struct igt_fb fb;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 } data_t;
 
 static int max_dotclock;
@@ -153,12 +153,11 @@ static void test_cleanup(data_t *data)
 
 static bool test_constraint(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	drmModeModeInfo *mode;
 
 	igt_display_reset(&data->display);
 	igt_output_set_crtc(data->output,
-			    igt_crtc_for_pipe(display, data->pipe));
+			    data->crtc);
 
 	mode = igt_output_get_mode(data->output);
 
@@ -167,9 +166,7 @@ static bool test_constraint(data_t *data)
 		return false;
 
 	if (igt_bigjoiner_possible(data->drm_fd, mode, max_dotclock)) {
-		for_each_connector_mode(data->output) {
-			mode = &data->output->config.connector->modes[j__];
-
+		for_each_connector_mode(data->output, mode) {
 			if (igt_bigjoiner_possible(data->drm_fd, mode, max_dotclock))
 				continue;
 
@@ -233,7 +230,7 @@ int igt_main()
 				continue;
 
 			for_each_crtc(display, crtc) {
-				if (!igt_pipe_connector_valid(crtc->pipe, output))
+				if (!igt_crtc_connector_valid(crtc, output))
 					continue;
 
 				/* LPSP is low power single pipe usages i.e. PIPE_A */
@@ -245,7 +242,7 @@ int igt_main()
 						     "LPSP support on external panel from Gen13+ platform\n");
 
 				data.output = output;
-				data.pipe = crtc->pipe;
+				data.crtc = crtc;
 
 				if (!test_constraint(&data))
 					continue;

@@ -669,6 +669,8 @@ igt_render_copyfunc_t igt_get_render_copyfunc(int fd)
 		copy = mtl_render_copyfunc;
 	else if (IS_DG2(devid))
 		copy = gen12p71_render_copyfunc;
+	else if (intel_gen(devid) >= 35)
+		copy = xe3p_render_copyfunc;
 	else if (intel_gen(devid) >= 20)
 		copy = xe2_render_copyfunc;
 	else if (IS_GEN12(devid))
@@ -767,7 +769,9 @@ igt_fillfunc_t igt_get_gpgpu_fillfunc(int devid)
 {
 	igt_fillfunc_t fill = NULL;
 
-	if (intel_graphics_ver(devid) >= IP_VER(12, 50))
+	if (intel_graphics_ver(devid) >= IP_VER(35, 0))
+		fill = xe3p_gpgpu_fillfunc;
+	else if (intel_graphics_ver(devid) >= IP_VER(12, 50))
 		fill = xehp_gpgpu_fillfunc;
 	else if (IS_GEN12(devid))
 		fill = gen12_gpgpu_fillfunc;

@@ -1,5 +1,5 @@
 project('igt-gpu-tools', 'c',
-	version : '2.3',
+	version : '2.4',
         default_options: [
           'warning_level=2',
           'c_std=gnu11',
@@ -162,6 +162,7 @@ endif
 build_info += 'Valgrind annotations: @0@'.format(valgrind.found())
 
 cairo = dependency('cairo', version : '>1.12.0', required : true)
+libpci = dependency('libpci', required : true)
 libudev = dependency('libudev', required : true)
 glib = dependency('glib-2.0', required : true)
 
@@ -233,6 +234,9 @@ if cc.has_header('sys/kd.h')
 endif
 if cc.has_header('libgen.h')
 	config.set('HAVE_LIBGEN_H', 1)
+endif
+if cc.has_header('drm/drm.h') and cc.has_header('linux/kfd_ioctl.h')
+        config.set('HAVE_KFD_IOCTL_H', 1)
 endif
 if cc.has_header('sys/io.h') and cc.has_function('outb', prefix: '#include <sys/io.h>')
 	config.set('HAVE_SYS_IO_H', 1)

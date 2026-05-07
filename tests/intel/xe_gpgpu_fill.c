@@ -91,6 +91,8 @@ static void buf_check(uint8_t *ptr, int width, int x, int y, uint8_t color)
  * SUBTEST: offset-16x16
  * Description: run gpgpu fill with <x,y> start position == <16,16>
  *
+ * SUBTEST: offset-4x4
+ * Description: run gpgpu fillwith <x,y> start position == <4,4>
  */
 
 static void gpgpu_fill(data_t *data, igt_fillfunc_t fill, uint32_t region,
@@ -197,6 +199,15 @@ int igt_main_args("dW:H:X:Y:", NULL, help_str, opt_handler, NULL)
 		gpgpu_fill(&data, fill_fn, 0,
 			   surfwidth, surfheight,
 			   16, 16,
+			   surfwidth / 2,
+			   surfheight / 2);
+	}
+
+	igt_subtest("offset-4x4") {
+		igt_require(intel_graphics_ver(data.devid) >= IP_VER(35, 0));
+		gpgpu_fill(&data, fill_fn, 0,
+			   surfwidth, surfheight,
+			   4, 4,
 			   surfwidth / 2,
 			   surfheight / 2);
 	}

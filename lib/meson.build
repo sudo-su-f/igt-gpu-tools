@@ -103,7 +103,6 @@ lib_sources = [
 	'igt_pm.c',
 	'igt_dummyload.c',
 	'igt_store.c',
-	'uwildmat/uwildmat.c',
 	'igt_kmod.c',
 	'igt_ktap.c',
 	'igt_panfrost.c',
@@ -115,6 +114,7 @@ lib_sources = [
 	'igt_amd.c',
 	'igt_edid.c',
 	'igt_eld.c',
+	'igt_hdr.c',
 	'igt_infoframe.c',
 	'igt_color.c',
 	'igt_color_lut.c',
@@ -132,6 +132,9 @@ lib_sources = [
 	'xe/xe_sriov_debugfs.c',
 	'xe/xe_sriov_provisioning.c',
 	'xe/xe_util.c',
+
+	# Vendored libraries:
+	'vendor/uwildmat/uwildmat.c',
 ]
 
 lib_deps = [
@@ -141,6 +144,7 @@ lib_deps = [
 	libdrm,
 	libdw,
 	libkmod,
+	libpci,
 	libudev,
 	math,
 	pciaccess,
@@ -149,6 +153,8 @@ lib_deps = [
 	realtime,
 	zlib
 ]
+
+inc = [ inc, include_directories('vendor') ]
 
 if libdrm_nouveau.found()
 	lib_deps += libdrm_nouveau
@@ -261,7 +267,7 @@ lib_version = vcs_tag(input : 'version.h.in', output : 'version.h',
 		      fallback : 'NO-GIT',
 		      command : vcs_command )
 
-iga64_assembly_sources = [ 'gpgpu_shader.c', 'gpgpu_fill.c', '../tests/intel/xe_eudebug_online.c' ]
+iga64_assembly_sources = [ 'gpgpu_shader.c', 'gpgpu_fill.c', '../tests/intel/xe_eudebug_online.c', '../tests/intel/xe_prefetch_fault.c']
 libiga64_asms = static_library('iga64_asms',
 	iga64_assembly_sources,
 	include_directories: inc,
@@ -335,6 +341,7 @@ lib_igt_perf = declare_dependency(link_with : lib_igt_perf_build,
 
 scan_dep = [
 	glib,
+	libpci,
 	libudev,
 ]
 
@@ -474,6 +481,7 @@ xe_oa_hardware = [
   'lnl',
   'bmg',
   'ptl',
+  'cri',
 ]
 
 xe_xml_files = []

@@ -47,7 +47,6 @@ typedef struct data {
         igt_crtc_t *crtc[MAX_PIPES];
         igt_pipe_crc_t *pipe_crc[MAX_PIPES];
         drmModeModeInfo mode[MAX_PIPES];
-        enum pipe pipe_id[MAX_PIPES];
         int w[MAX_PIPES];
         int h[MAX_PIPES];
         int fd;
@@ -152,29 +151,27 @@ enum test {
 static void test_init(data_t *data)
 {
 	igt_display_t *display = &data->display;
-	int i, n, max_pipes = igt_display_n_crtcs(display);
+	igt_output_t *output;
 	igt_crtc_t *crtc;
+	int n = 0;
 
 	for_each_crtc(display, crtc) {
-		data->pipe_id[crtc->pipe] = crtc->pipe;
-		data->crtc[crtc->pipe] = crtc;
-		data->primary[crtc->pipe] = igt_crtc_get_plane_type(crtc,
-								    DRM_PLANE_TYPE_PRIMARY);
-		data->overlay[crtc->pipe] = igt_crtc_get_plane_type_index(crtc,
-									  DRM_PLANE_TYPE_OVERLAY,
-									  0);
-		data->overlay2[crtc->pipe] = igt_crtc_get_plane_type_index(crtc,
-									   DRM_PLANE_TYPE_OVERLAY,
-									   1);
-		data->cursor[crtc->pipe] = igt_crtc_get_plane_type(crtc,
-								   DRM_PLANE_TYPE_CURSOR);
-		data->pipe_crc[crtc->pipe] =
-			igt_crtc_crc_new(crtc,
-					 IGT_PIPE_CRC_SOURCE_AUTO);
+		data->crtc[crtc->crtc_index] = crtc;
+		data->primary[crtc->crtc_index] =
+			igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY);
+		data->overlay[crtc->crtc_index] =
+			igt_crtc_get_plane_type_index(crtc, DRM_PLANE_TYPE_OVERLAY, 0);
+		data->overlay2[crtc->crtc_index] =
+			igt_crtc_get_plane_type_index(crtc, DRM_PLANE_TYPE_OVERLAY, 1);
+		data->cursor[crtc->crtc_index] =
+			igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_CURSOR);
+		data->pipe_crc[crtc->crtc_index] =
+			igt_crtc_crc_new(crtc, IGT_PIPE_CRC_SOURCE_AUTO);
 	}
 
-	for (i = 0, n = 0; i < display->n_outputs && n < max_pipes; ++i) {
-		igt_output_t *output = &display->outputs[i];
+	for_each_output(display, output) {
+		if (n == igt_display_n_crtcs(display))
+			break;
 
 		data->output[n] = output;
 
@@ -201,7 +198,7 @@ static void test_fini(data_t *data)
 	igt_crtc_t *crtc;
 
 	for_each_crtc(display, crtc) {
-		igt_pipe_crc_free(data->pipe_crc[crtc->pipe]);
+		igt_pipe_crc_free(data->pipe_crc[crtc->crtc_index]);
 	}
 
 	igt_display_reset(display);
@@ -369,19 +366,19 @@ static void test_multi_overlay(data_t *data, int display_count, int w, int h, st
 }
 
 /*
- * Compares the result of white backgroud with white window with and without MPO
+ * Compares the result of white background with white window with and without MPO
  *
  * Reference crc:
  * Draws a White background of size (pw,ph).
  *
  * Test crc:
- * Draws a White Overlay of size (pw,ph) then creates a cutout of size (p,w) at location (x,y)
- * Draws a White Primary plane of size (p,w) at location (x,y) (under the overlay)
+ * Draws a White Overlay of size (pw,ph) then creates a cutout of size (dw,dh) at location (x,y)
+ * Draws a White Primary plane of size (dw,dh) at location (x,y) (under the overlay)
  *
  * NOTE: The reason for using White+White is to speed up the crc (reuse the ref crc for all cases vs taking
  * a ref crc per flip)
  */
-static void test_plane(data_t *data, int n, int x, int y, double w, double h, double dw, double dh, int pw, int ph, struct fbc *fbc){
+static void test_plane(data_t *data, int n, int x, int y, double dw, double dh, int pw, int ph, struct fbc *fbc){
 
 	igt_crc_t test_crc;
 	igt_display_t *display = &data->display;
@@ -403,7 +400,7 @@ static void test_plane(data_t *data, int n, int x, int y, double w, double h, do
 	igt_plane_set_fb(data->primary[n], &fbc[n].test_primary);
 	igt_plane_set_fb(data->overlay[n], &fbc[n].test_overlay);
 
-	/* Move the overlay to cover the cutout */
+	/* Move the primary to cover the cutout */
 	igt_plane_set_position(data->primary[n], x, y);
 	igt_plane_set_size(data->primary[n], dw, dh);
 
@@ -454,11 +451,11 @@ static void test_panning_1_display(data_t *data, int display_count, int w, int h
 				int x = dx*j*dir[i][0];
 				int y = dy*j*dir[i][1];
 
-				/* No need to pan a overley that is bigger than the display */
+				/* No need to pan an overlay that is bigger than the display */
 				if (pw <= w && ph <= h)
 					break;
 
-				test_plane(data, n, x, y, w, h, w, h, pw, ph, fb);
+				test_plane(data, n, x, y, w, h, pw, ph, fb);
 
 			}
 		}
@@ -494,14 +491,14 @@ static void test_scaling_planes(data_t *data, int display_count, int w, int h, s
 		int ph = data->h[n];
 
 		for (int i=0;i<ARRAY_SIZE(scale);i++) {
-			/* No need to scale a overley that is bigger than the display */
+			/* No need to scale an overlay that is bigger than the display */
 			if (pw <= w*scale[i] && ph <= h*scale[i])
 				break;
-			test_plane(data, n, 0, 0, w, h, w*scale[i], h*scale[i], pw, ph, fb);
+			test_plane(data, n, 0, 0, w*scale[i], h*scale[i], pw, ph, fb);
 		}
 
 		/* Test Fullscreen scale*/
-		test_plane(data, n, 0, 0, w, h, pw, ph, pw, ph, fb);
+		test_plane(data, n, 0, 0, pw, ph, pw, ph, fb);
 	}
 
 	return;
@@ -526,7 +523,7 @@ static void test_panning_2_display(data_t *data, int w, int h, struct fbc *fbc)
 	int it = 3; /* # of times to swap */
 
 	/* Set y to 0 if window is bigger than one of the displays
-	 * beacause y will be negative in that case
+	 * because y will be negative in that case
 	 */
 	if (h >= smallest_h)
 		y[0] = y[1] = y[2] = 0;
@@ -535,9 +532,9 @@ static void test_panning_2_display(data_t *data, int w, int h, struct fbc *fbc)
 	for (int j = 0; j < ARRAY_SIZE(y); j++){
 		for (int i = 0; i < it; i++){
 			if (toggle)
-				test_plane(data, 0, pw-w, y[j], w, h, w, h, pw, ph, fbc);
+				test_plane(data, 0, pw-w, y[j], w, h, pw, ph, fbc);
 			else
-				test_plane(data, 1, 0, y[j], w, h, w, h, pw2, ph2, fbc);
+				test_plane(data, 1, 0, y[j], w, h, pw2, ph2, fbc);
 
 			toggle = !toggle;
 		}
@@ -570,7 +567,7 @@ static void test_multi_mpo_invalid(data_t *data)
 	igt_skip_on(!data->overlay2[0]);
 
 	igt_output_set_crtc(data->output[0],
-			    igt_crtc_for_pipe(display, data->pipe_id[0]));
+			    data->crtc[0]);
 
 	igt_create_color_fb(data->fd, w, h, DRM_FORMAT_XRGB8888, 0, 1.0, 1.0, 1.0, &fb[0].test_primary);
 	igt_create_fb(data->fd, w, h, DRM_FORMAT_NV12, 0, &fb[0].test_overlay);
@@ -647,7 +644,7 @@ static void test_display_mpo(data_t *data, enum test test, uint32_t format, int 
 		}
 
 		igt_output_set_crtc(data->output[n],
-				    igt_crtc_for_pipe(display, data->pipe_id[n]));
+				    data->crtc[n]);
 
 		igt_create_fb(data->fd, w, h, DRM_FORMAT_XRGB8888, 0, &fb[n].ref_primary);
 		igt_create_color_fb(data->fd, w, h, DRM_FORMAT_XRGB8888, 0, 1.0, 1.0, 1.0, &fb[n].ref_primary);
@@ -735,7 +732,7 @@ static void test_mpo_4k(data_t *data)
 			 0.00, 0.00, 0.00, 0.00);
 
 	igt_output_set_crtc(data->output[0],
-			    igt_crtc_for_pipe(display, data->pipe_id[0]));
+			    data->crtc[0]);
 	igt_plane_set_fb(data->primary[0], &r_fb);
 	igt_display_commit_atomic(display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 
@@ -801,9 +798,9 @@ static void test_mpo_swizzle_toggle_multihead(data_t *data)
 
 	/* Initial modeset */
 	igt_output_set_crtc(data->output[0],
-			    igt_crtc_for_pipe(display, data->pipe_id[0]));
+			    data->crtc[0]);
 	igt_output_set_crtc(data->output[1],
-			    igt_crtc_for_pipe(display, data->pipe_id[1]));
+			    data->crtc[1]);
 	force_output_mode(data, data->output[0], &test_mode_1);
 	force_output_mode(data, data->output[1], &test_mode_2);
 
@@ -872,7 +869,7 @@ static void test_mpo_swizzle_toggle(data_t *data)
 
 	/* Initial modeset */
 	igt_output_set_crtc(data->output[0],
-			    igt_crtc_for_pipe(display, data->pipe_id[0]));
+			    data->crtc[0]);
 	force_output_mode(data, data->output[0], &test_mode_1);
 
 	igt_plane_set_fb(data->primary[0], &fb_1920_xb24_linear);

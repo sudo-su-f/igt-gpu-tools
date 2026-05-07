@@ -10,13 +10,17 @@ if libdrm_amdgpu.found()
 			  'amd_bo',
 			  'amd_bypass',
 			  'amd_color',
+                          'amd_cross_gpu_sync',
 			  'amd_cp_dma_misc',
 			  'amd_cs_nop',
 			  'amd_cursor_overlay',
 			  'amd_deadlock',
+                          'amd_dmabuf_unload',
 			  'amd_dp_dsc',
 			  'amd_freesync_video_mode',
 			  'amd_fuzzing',
+			  'amd_fuzzing_sysfs',
+			  'amd_fuzzing_debugfs',
 			  'amd_hotplug',
 			  'amd_gang_cs' ,
 			  'amd_ilr',
@@ -70,6 +74,12 @@ if libdrm_amdgpu.found()
 	else
 		warning('libdrm <= 2.4.104 found, amd_queue_reset test not applicable')
 	endif
+        if config.has('HAVE_KFD_IOCTL_H') and host_machine.cpu_family() in ['x86', 'x86_64']
+                amdgpu_progs +=[ 'amd_kfd_dmabuf_unload',
+			  'amd_fuzzing_kfd', ]
+        else
+                warning('linux/kfd_ioctl.h not found, amd_kfd_dmabuf_unload test not applicable')
+        endif
 	amdgpu_deps += libdrm_amdgpu
 endif
 

@@ -126,6 +126,7 @@ typedef struct {
 	uint32_t lessee_id;
 	igt_display_t display;
 	struct igt_fb primary_fb;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 	drmModeModeInfo *mode;
 } lease_t;
@@ -133,7 +134,6 @@ typedef struct {
 typedef struct {
 	lease_t lease;
 	lease_t master;
-	enum pipe pipe;
 	uint32_t crtc_id;
 	uint32_t connector_id;
 	uint32_t plane_id;
@@ -147,13 +147,12 @@ static igt_output_t *connector_id_to_output(igt_display_t *display, uint32_t con
 	return igt_output_from_connector(display, &connector);
 }
 
-static int prepare_crtc(data_t *data, bool is_master)
+static int prepare_crtc(data_t *data, lease_t *lease)
 {
 	drmModeModeInfo *mode;
-	lease_t *lease = is_master ? &data->master : &data->lease;
 	igt_display_t *display = &lease->display;
+	igt_crtc_t *crtc = igt_crtc_for_crtc_id(display, data->crtc_id);
 	igt_output_t *output = connector_id_to_output(display, data->connector_id);
-	enum pipe pipe = igt_crtc_for_pipe(display, data->pipe)->pipe;
 	igt_plane_t *primary;
 	int ret;
 
@@ -161,7 +160,7 @@ static int prepare_crtc(data_t *data, bool is_master)
 		return -ENOENT;
 
 	/* select the pipe we want to use */
-	igt_output_set_crtc(output, igt_crtc_for_pipe(display, pipe));
+	igt_output_set_crtc(output, crtc);
 
 	/* create and set the primary plane fb */
 	mode = igt_output_get_mode(output);
@@ -179,8 +178,9 @@ static int prepare_crtc(data_t *data, bool is_master)
 	if (ret)
 		return ret;
 
-	igt_wait_for_vblank(igt_crtc_for_pipe(display, pipe));
+	igt_wait_for_vblank(crtc);
 
+	lease->crtc = crtc;
 	lease->output = output;
 	lease->mode = mode;
 	return 0;
@@ -308,20 +308,18 @@ static int paint_fb(int drm_fd, struct igt_fb *fb, const char *test_name,
 
 static void simple_lease(data_t *data)
 {
-	enum pipe pipe = data->pipe;
-
 	/* Create a valid lease */
 	igt_assert_eq(make_lease(data), 0);
 
 	igt_display_require(&data->lease.display, data->lease.fd);
 
 	/* Set a mode on the leased output */
-	igt_assert_eq(0, prepare_crtc(data, false));
+	igt_assert_eq(0, prepare_crtc(data, &data->lease));
 
 	/* Paint something attractive */
 	paint_fb(data->lease.fd, &data->lease.primary_fb, "simple-lease",
 		 data->lease.mode->name, igt_output_name(data->lease.output),
-		 kmstest_pipe_name(pipe));
+		 igt_crtc_name(data->lease.crtc));
 	igt_debug_wait_for_keypress("lease");
 	cleanup_crtc(&data->lease,
 		     connector_id_to_output(&data->lease.display, data->connector_id));
@@ -341,8 +339,6 @@ static void page_flip_implicit_plane(data_t *data)
 	drmModePlaneRes *plane_resources;
 	uint32_t wrong_plane_id = 0;
 	int i;
-	igt_display_t *display;
-	enum pipe pipe = data->pipe;
 
 	/* find a plane which isn't the primary one for us */
 	plane_resources = drmModeGetPlaneResources(data->master.fd);
@@ -367,16 +363,14 @@ static void page_flip_implicit_plane(data_t *data)
 	drmSetClientCap(data->master.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 
 	/* Set a mode on the leased output */
-	igt_assert_eq(0, prepare_crtc(data, true));
+	igt_assert_eq(0, prepare_crtc(data, &data->master));
 
 	/* sanity check */
 	do_or_die(drmModePageFlip(data->master.fd, data->crtc_id,
 			      data->master.primary_fb.fb_id,
 			      0, NULL));
 
-	display = &data->master.display;
-
-	igt_wait_for_vblank(igt_crtc_for_pipe(display, pipe));
+	igt_wait_for_vblank(data->master.crtc);
 
 	do_or_die(drmModePageFlip(data->lease.fd, data->crtc_id,
 			      data->master.primary_fb.fb_id,
@@ -386,7 +380,7 @@ static void page_flip_implicit_plane(data_t *data)
 	object_ids[mcl.object_count++] = wrong_plane_id;
 	do_or_die(create_lease(data->master.fd, &mcl, &data->lease.fd));
 
-	igt_wait_for_vblank(igt_crtc_for_pipe(display, pipe));
+	igt_wait_for_vblank(data->master.crtc);
 
 	igt_assert_eq(drmModePageFlip(data->lease.fd, data->crtc_id,
 				      data->master.primary_fb.fb_id,
@@ -441,7 +435,7 @@ static void setcrtc_implicit_plane(data_t *data)
 	}
 
 	/* Set a mode on the leased output */
-	igt_assert_eq(0, prepare_crtc(data, true));
+	igt_assert_eq(0, prepare_crtc(data, &data->master));
 
 	/* sanity check */
 	ret = drmModeSetCrtc(data->master.fd, data->crtc_id, -1,
@@ -482,7 +476,7 @@ static void cursor_implicit_plane(data_t *data)
 	drmSetClientCap(data->master.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
 
 	/* Set a mode on the leased output */
-	igt_assert_eq(0, prepare_crtc(data, true));
+	igt_assert_eq(0, prepare_crtc(data, &data->master));
 
 	/* sanity check */
 	do_or_die(drmModeSetCursor(data->master.fd, data->crtc_id, 0, 0, 0));
@@ -793,7 +787,7 @@ static void lease_revoke(data_t *data)
 	igt_assert_eq(revoke_lease(data->master.fd, &mrl), 0);
 
 	/* Try to use the leased objects */
-	ret = prepare_crtc(data, false);
+	ret = prepare_crtc(data, &data->lease);
 
 	/* Ensure that the expected error is returned */
 	igt_assert_eq(ret, -ENOENT);
@@ -875,7 +869,10 @@ static void invalid_create_leases(data_t *data)
 	uint32_t object_ids[4];
 	struct drm_mode_create_lease mcl = {0};
 	drmModeRes *resources;
+	igt_crtc_t *crtc;
 	int tmp_fd, ret;
+
+	crtc = igt_first_crtc(&data->master.display);
 
 	/* NULL array pointer */
 	mcl.object_count = 1;
@@ -893,11 +890,11 @@ static void invalid_create_leases(data_t *data)
 	igt_assert_eq(create_lease(data->master.fd, &mcl, NULL), -EINVAL);
 
 	/* no connector, non-universal_plane */
-	object_ids[0] = igt_crtc_for_pipe(&data->master.display, 0)->crtc_id;
+	object_ids[0] = crtc->crtc_id;
 	igt_assert_eq(create_lease(data->master.fd, &mcl, NULL), -EINVAL);
 
 	/* sanity check */
-	object_ids[0] = igt_crtc_for_pipe(&data->master.display, 0)->crtc_id;
+	object_ids[0] = crtc->crtc_id;
 	object_ids[1] = data->master.display.outputs[0].id;
 	mcl.object_count = 2;
 	igt_assert_eq(create_lease(data->master.fd, &mcl, NULL), 0);
@@ -908,8 +905,7 @@ static void invalid_create_leases(data_t *data)
 	igt_assert_eq(create_lease(data->master.fd, &mcl, NULL), -EINVAL);
 
 	/* sanity check */
-	object_ids[2] = igt_crtc_get_plane_type(igt_crtc_for_pipe(&data->master.display, 0),
-						DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
+	object_ids[2] = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
 	mcl.object_count = 3;
 	igt_assert_eq(create_lease(data->master.fd, &mcl, NULL), 0);
 	close(mcl.fd);
@@ -1072,11 +1068,13 @@ static int _create_simple_lease(int master_fd, data_t *data, int expected_ret)
 {
 	uint32_t object_ids[3];
 	struct drm_mode_create_lease mcl;
+	igt_crtc_t *crtc;
 
-	object_ids[0] = igt_crtc_for_pipe(&data->master.display, 0)->crtc_id;
+	crtc = igt_first_crtc(&data->master.display);
+
+	object_ids[0] = crtc->crtc_id;
 	object_ids[1] = data->master.display.outputs[0].id;
-	object_ids[2] = igt_crtc_get_plane_type(igt_crtc_for_pipe(&data->master.display, 0),
-						DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
+	object_ids[2] = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
 	mcl.object_ids = (uint64_t) (uintptr_t) object_ids;
 	mcl.object_count = 3;
 	mcl.flags = 0;
@@ -1163,13 +1161,16 @@ static void implicit_plane_lease(data_t *data)
 	struct drm_mode_create_lease mcl;
 	struct drm_mode_get_lease mgl;
 	int ret;
-	uint32_t cursor_id = igt_crtc_get_plane_type(igt_crtc_for_pipe(&data->master.display, 0),
-						     DRM_PLANE_TYPE_CURSOR)->drm_plane->plane_id;
+	uint32_t cursor_id;
+	igt_crtc_t *crtc;
 
-	object_ids[0] = igt_crtc_for_pipe(&data->master.display, 0)->crtc_id;
+	crtc = igt_first_crtc(&data->master.display);
+
+	cursor_id = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_CURSOR)->drm_plane->plane_id;
+
+	object_ids[0] = crtc->crtc_id;
 	object_ids[1] = data->master.display.outputs[0].id;
-	object_ids[2] = igt_crtc_get_plane_type(igt_crtc_for_pipe(&data->master.display, 0),
-						DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
+	object_ids[2] = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY)->drm_plane->plane_id;
 	mcl.object_ids = (uint64_t) (uintptr_t) object_ids;
 	mcl.object_count = 3;
 	mcl.flags = 0;
@@ -1290,7 +1291,6 @@ int igt_main()
 			igt_subtest_with_dynamic_f("%s", f->name) {
 				for_each_crtc_with_valid_output(display, crtc,
 								output) {
-					data.pipe = crtc->pipe;
 					igt_display_reset(display);
 
 					igt_output_set_crtc(output,

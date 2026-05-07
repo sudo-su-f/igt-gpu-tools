@@ -38,6 +38,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #include "i915/gem.h"
 #include "i915/gem_create.h"
@@ -45,6 +46,7 @@
 #include "i915/intel_fbc.h"
 #include "igt.h"
 #include "igt_sysfs.h"
+#include "igt_hdr.h"
 #include "igt_psr.h"
 
 /**
@@ -66,12 +68,30 @@
  * SUBTEST: psr-%dp-rte
  * Description: Sanity test to enable PSR with %arg[1] panels.
  *
+ * SUBTEST: hdr-%dp-rte
+ * Description: Sanity test to enable PSR with %arg[1] panels.
+ *
  * SUBTEST: fbcdrrs-%dp-rte
  * Description: Sanity test to enable FBC & DRRS with %arg[1] panels.
  *
  * SUBTEST: fbcpsr-%dp-rte
  * Description: Sanity test to enable FBC & PSR with %arg[1] panels.
  *
+ * SUBTEST: fbchdr-%dp-rte
+ * Description: Sanity test to enable FBC & HDR with %arg[1] panels.
+ *
+ * SUBTEST: drrshdr-%dp-rte
+ * Description: Sanity test to enable HDR & DRRS with %arg[1] panels.
+ *
+ * SUBTEST: psrhdr-%dp-rte
+ * Description: Sanity test to enable HDR & PSR with %arg[1] panels.
+ *
+ * SUBTEST: fbcdrrshdr-%dp-rte
+ * Description: Sanity test to enable HDR, FBC & DRRS with %arg[1] panels.
+ *
+ * SUBTEST: fbcpsrhdr-%dp-rte
+ * Description: Sanity test to enable HDR, FBC & PSR with %arg[1] panels.
+ *
  * arg[1].values:   1, 2
  */
 
@@ -85,10 +105,28 @@
  * SUBTEST: psr-1p-offscreen-pri-%s-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
+ * SUBTEST: hdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
  * SUBTEST: fbcdrrs-1p-offscreen-pri-%s-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * SUBTEST: fbcpsr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbchdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-1p-offscreen-pri-%s-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1]:
@@ -116,6 +154,10 @@
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-1p-offscreen-pri-%s-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
@@ -123,6 +165,21 @@
  * SUBTEST: fbcpsr-1p-offscreen-pri-%s-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-1p-offscreen-pri-%s-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1]:
  *
@@ -149,11 +206,35 @@
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
@@ -182,10 +263,28 @@
  * SUBTEST: psr-%dp-primscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
+ * SUBTEST: hdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * SUBTEST: fbcpsr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1].values:   1, 2
@@ -213,10 +312,28 @@
  * SUBTEST: psr-%dp-primscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
+ * SUBTEST: hdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * SUBTEST: fbcpsr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1].values:   1, 2
@@ -241,11 +358,35 @@
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
@@ -268,10 +409,28 @@
  * SUBTEST: psr-2p-scndscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
+ * SUBTEST: hdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * SUBTEST: fbcpsr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1]:
@@ -300,11 +459,35 @@
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-%s-indfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-%s-indfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
@@ -331,10 +514,28 @@
  * SUBTEST: psr-2p-scndscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
+ * SUBTEST: hdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * SUBTEST: fbcpsr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  *
  * arg[1]:
@@ -357,11 +558,35 @@
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-pri-shrfb-draw-%s
+ * Description: Draw a set of rectangles on the screen using the provided method
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-pri-shrfb-draw-%s
  * Description: Draw a set of rectangles on the screen using the provided method
  * Driver requirement: i915
  *
@@ -382,10 +607,28 @@
  * SUBTEST: psr-%dp-pri-indfb-multidraw
  * Description: Draw a set of rectangles on the screen using alternated drawing methods
  *
+ * SUBTEST: hdr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
  * SUBTEST: fbcdrrs-%dp-pri-indfb-multidraw
  * Description: Draw a set of rectangles on the screen using alternated drawing methods
  *
  * SUBTEST: fbcpsr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
+ * SUBTEST: fbchdr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
+ * SUBTEST: drrshdr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
+ * SUBTEST: psrhdr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
+ * SUBTEST: fbcdrrshdr-%dp-pri-indfb-multidraw
+ * Description: Draw a set of rectangles on the screen using alternated drawing methods
+ *
+ * SUBTEST: fbcpsrhdr-%dp-pri-indfb-multidraw
  * Description: Draw a set of rectangles on the screen using alternated drawing methods
  *
  * arg[1].values:   1, 2
@@ -401,10 +644,28 @@
  * SUBTEST: psr-%s-draw-%s
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  *
+ * SUBTEST: hdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
  * SUBTEST: fbcdrrs-%s-draw-%s
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  *
  * SUBTEST: fbcpsr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
+ * SUBTEST: fbchdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
+ * SUBTEST: drrshdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
+ * SUBTEST: psrhdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
+ * SUBTEST: fbcdrrshdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ *
+ * SUBTEST: fbcpsrhdr-%s-draw-%s
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  *
  * arg[1]:
@@ -434,11 +695,35 @@
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-%s-draw-%s
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-%s-draw-%s
+ * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-%s-draw-%s
  * Description: Test pixel formats (%arg[1]) that are not FORMAT_DEFAULT
  * Driver requirement: i915
  *
@@ -468,6 +753,18 @@
  *
  * SUBTEST: fbcpsr-slowdraw
  * Description: Sleep a little bit between drawing operations with FBC & PSR
+ *
+ * SUBTEST: drrshdr-slowdraw
+ * Description: Sleep a little bit between drawing operations with DRRS & HDR
+ *
+ * SUBTEST: psrhdr-slowdraw
+ * Description: Sleep a little bit between drawing operations with PSR & HDR
+ *
+ * SUBTEST: fbcdrrshdr-slowdraw
+ * Description: Sleep a little bit between drawing operations with DRRS, HDR & FBC
+ *
+ * SUBTEST: fbcpsrhdr-slowdraw
+ * Description: Sleep a little bit between drawing operations with PSR, HDR & FBC
  */
 
 /**
@@ -480,10 +777,28 @@
  * SUBTEST: psr-%dp-primscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
+ * SUBTEST: hdr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
  * SUBTEST: fbcpsr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
  * arg[1].values:   1, 2
@@ -510,10 +825,28 @@
  * SUBTEST: psr-2p-scndscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
+ * SUBTEST: hdr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
  * SUBTEST: fbcpsr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-%s-%sflip-blt
+ * Description: Just exercise page flips with the patterns we have
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-%s-%sflip-blt
  * Description: Just exercise page flips with the patterns we have
  *
  * arg[1]:
@@ -541,6 +874,18 @@
  * Description: Check if the hardware tracking works after page flips
  * Driver requirement: i915
  *
+ * SUBTEST: fbchdr-%dp-%s-fliptrack-mmap-gtt
+ * Description: Check if the hardware tracking works after page flips
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-%dp-%s-fliptrack-mmap-gtt
+ * Description: Check if the hardware tracking works after page flips
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-%dp-%s-fliptrack-mmap-gtt
+ * Description: Check if the hardware tracking works after page flips
+ * Driver requirement: i915
+ *
  * arg[1].values:   1, 2
  *
  * arg[2]:
@@ -559,10 +904,28 @@
  * SUBTEST: psr-%dp-primscrn-%s-indfb-move
  * Description: Just move the %arg[2] around
  *
+ * SUBTEST: hdr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-%s-indfb-move
  * Description: Just move the %arg[2] around
  *
  * SUBTEST: fbcpsr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-%s-indfb-move
+ * Description: Just move the %arg[2] around
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-%s-indfb-move
  * Description: Just move the %arg[2] around
  *
  * arg[1].values:   1, 2
@@ -583,10 +946,28 @@
  * SUBTEST: psr-2p-scndscrn-%s-indfb-move
  * Description: Just move the %arg[1] around
  *
+ * SUBTEST: hdr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-%s-indfb-move
  * Description: Just move the %arg[1] around
  *
  * SUBTEST: fbcpsr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-%s-indfb-move
+ * Description: Just move the %arg[1] around
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-%s-indfb-move
  * Description: Just move the %arg[1] around
  *
  * arg[1]:
@@ -605,10 +986,28 @@
  * SUBTEST: psr-%dp-primscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[2] a few times
  *
+ * SUBTEST: hdr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[2] a few times
  *
  * SUBTEST: fbcpsr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[2] a few times
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[2] a few times
  *
  * arg[1].values:   1, 2
@@ -629,10 +1028,28 @@
  * SUBTEST: psr-2p-scndscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[1] a few times
  *
+ * SUBTEST: hdr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[1] a few times
  *
  * SUBTEST: fbcpsr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-%s-indfb-onoff
+ * Description: Just enable and disable the %arg[1] a few times
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-%s-indfb-onoff
  * Description: Just enable and disable the %arg[1] a few times
  *
  * arg[1]:
@@ -651,10 +1068,28 @@
  * SUBTEST: psr-%dp-primscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
+ * SUBTEST: hdr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
  * SUBTEST: fbcdrrs-%dp-primscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
  * SUBTEST: fbcpsr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbchdr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: drrshdr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: psrhdr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbcdrrshdr-%dp-primscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbcpsrhdr-%dp-primscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
  * SUBTEST: drrs-2p-scndscrn-spr-indfb-fullscreen
@@ -666,10 +1101,28 @@
  * SUBTEST: psr-2p-scndscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
+ * SUBTEST: hdr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
  * SUBTEST: fbcdrrs-2p-scndscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
  * SUBTEST: fbcpsr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbchdr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: drrshdr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: psrhdr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbcdrrshdr-2p-scndscrn-spr-indfb-fullscreen
+ * Description: Put a fullscreen plane covering the whole screen
+ *
+ * SUBTEST: fbcpsrhdr-2p-scndscrn-spr-indfb-fullscreen
  * Description: Put a fullscreen plane covering the whole screen
  *
  * arg[1].values:   1, 2
@@ -685,10 +1138,28 @@
  * SUBTEST: psr-%s-scaledprimary
  * Description: Try different primary plane scaling strategies
  *
+ * SUBTEST: hdr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
  * SUBTEST: fbcdrrs-%s-scaledprimary
  * Description: Try different primary plane scaling strategies
  *
  * SUBTEST: fbcpsr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
+ * SUBTEST: fbchdr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
+ * SUBTEST: drrshdr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
+ * SUBTEST: psrhdr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
+ * SUBTEST: fbcdrrshdr-%s-scaledprimary
+ * Description: Try different primary plane scaling strategies
+ *
+ * SUBTEST: fbcpsrhdr-%s-scaledprimary
  * Description: Try different primary plane scaling strategies
  *
  * arg[1]:
@@ -707,11 +1178,29 @@
  * SUBTEST: psr-modesetfrombusy
  * Description: Modeset from a busy buffer to a non-busy buffer with PSR
  *
+ * SUBTEST: hdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with HDR
+ *
  * SUBTEST: fbcdrrs-modesetfrombusy
  * Description: Modeset from a busy buffer to a non-busy buffer with FBC & DRRS
  *
  * SUBTEST: fbcpsr-modesetfrombusy
  * Description: Modeset from a busy buffer to a non-busy buffer with FBC & PSR
+ *
+ * SUBTEST: fbchdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with FBC & HDR
+ *
+ * SUBTEST: drrshdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with DRRS & HDR
+ *
+ * SUBTEST: psrhdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with HDR & PSR
+ *
+ * SUBTEST: fbcdrrshdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with DRRS, HDR & FBC
+ *
+ * SUBTEST: fbcpsrhdr-modesetfrombusy
+ * Description: Modeset from a busy buffer to a non-busy buffer with HDR, PSR & FBC
  */
 
 /**
@@ -724,11 +1213,29 @@
  * SUBTEST: psr-suspend
  * Description: Make sure suspend/resume keeps us on the same state of PSR
  *
+ * SUBTEST: hdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of HDR
+ *
  * SUBTEST: fbcdrrs-suspend
  * Description: Make sure suspend/resume keeps us on the same state of FBC & DRRS
  *
  * SUBTEST: fbcpsr-suspend
  * Description: Make sure suspend/resume keeps us on the same state of FBC & PSR
+ *
+ * SUBTEST: fbchdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of FBC & HDR
+ *
+ * SUBTEST: drrshdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of HDR & DRRS
+ *
+ * SUBTEST: psrhdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of HDR & PSR
+ *
+ * SUBTEST: fbcdrrshdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of HDR, DRRS & FBC
+ *
+ * SUBTEST: fbcpsrhdr-suspend
+ * Description: Make sure suspend/resume keeps us on the same state of HDR, PSR & FBC
  */
 
 /**
@@ -744,11 +1251,35 @@
  * Description: Test drawing as far from the fence start as possible
  * Driver requirement: i915
  *
+ * SUBTEST: hdr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
  * SUBTEST: fbcdrrs-farfromfence-mmap-gtt
  * Description: Test drawing as far from the fence start as possible
  * Driver requirement: i915
  *
  * SUBTEST: fbcpsr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbchdr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
+ * SUBTEST: drrshdr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
+ * SUBTEST: psrhdr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcdrrshdr-farfromfence-mmap-gtt
+ * Description: Test drawing as far from the fence start as possible
+ * Driver requirement: i915
+ *
+ * SUBTEST: fbcpsrhdr-farfromfence-mmap-gtt
  * Description: Test drawing as far from the fence start as possible
  * Driver requirement: i915
  */
@@ -762,6 +1293,15 @@
  *
  * SUBTEST: fbcpsr-stridechange
  * Description: Change the frontbuffer stride by doing a modeset
+ *
+ * SUBTEST: fbchdr-stridechange
+ * Description: Change the frontbuffer stride by doing a modeset
+ *
+ * SUBTEST: fbcdrrshdr-stridechange
+ * Description: Change the frontbuffer stride by doing a modeset
+ *
+ * SUBTEST: fbcpsrhdr-stridechange
+ * Description: Change the frontbuffer stride by doing a modeset
  */
 
 /**
@@ -774,6 +1314,18 @@
  *              basic drawing test, else set the mode & test if FBC is disabled
  *
  * SUBTEST: fbcpsr-tiling-%s
+ * Description: Test %arg[1] formats, if the tiling format supports FBC do the
+ *              basic drawing test, else set the mode & test if FBC is disabled
+ *
+ * SUBTEST: fbchdr-tiling-%s
+ * Description: Test %arg[1] formats, if the tiling format supports FBC do the
+ *              basic drawing test, else set the mode & test if FBC is disabled
+ *
+ * SUBTEST: fbcdrrshdr-tiling-%s
+ * Description: Test %arg[1] formats, if the tiling format supports FBC do the
+ *              basic drawing test, else set the mode & test if FBC is disabled
+ *
+ * SUBTEST: fbcpsrhdr-tiling-%s
  * Description: Test %arg[1] formats, if the tiling format supports FBC do the
  *              basic drawing test, else set the mode & test if FBC is disabled
  *
@@ -859,8 +1411,9 @@ struct test_mode {
 		FEATURE_FBC   = 1,
 		FEATURE_PSR   = 2,
 		FEATURE_DRRS  = 4,
-		FEATURE_COUNT = 8,
-		FEATURE_DEFAULT = 8,
+		FEATURE_HDR   = 8,
+		FEATURE_COUNT = 16,
+		FEATURE_DEFAULT = 16,
 	} feature;
 
 	/* Possible pixel formats. We just use FORMAT_DEFAULT for most tests and
@@ -953,6 +1506,12 @@ struct {
 	.can_test = false,
 };
 
+struct {
+	bool can_test;
+} hdr = {
+	.can_test = false,
+};
+
 igt_pipe_crc_t *pipe_crc;
 igt_crc_t *wanted_crc;
 struct {
@@ -1020,7 +1579,7 @@ struct {
 };
 
 struct modeset_params {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_output_t *output;
 	drmModeModeInfo mode;
 
@@ -1104,7 +1663,7 @@ static drmModeModeInfo *connector_get_mode(igt_output_t *output)
 }
 
 static void init_mode_params(struct modeset_params *params,
-			     igt_output_t *output, enum pipe pipe)
+			     igt_output_t *output, igt_crtc_t *crtc)
 {
 	int i;
 	drmModeModeInfo *mode;
@@ -1112,11 +1671,11 @@ static void init_mode_params(struct modeset_params *params,
 	igt_output_override_mode(output, NULL);
 	mode = connector_get_mode(output);
 
-	params->pipe = pipe;
+	params->crtc = crtc;
 	params->output = output;
 	params->mode = *mode;
 
-	params->primary.plane = igt_crtc_get_plane_type(igt_crtc_for_pipe(&drm.display, pipe),
+	params->primary.plane = igt_crtc_get_plane_type(crtc,
 							DRM_PLANE_TYPE_PRIMARY);
 	params->primary.fb = NULL;
 	params->primary.x = 0;
@@ -1124,7 +1683,7 @@ static void init_mode_params(struct modeset_params *params,
 	params->primary.w = mode->hdisplay;
 	params->primary.h = mode->vdisplay;
 
-	params->cursor.plane = igt_crtc_get_plane_type(igt_crtc_for_pipe(&drm.display, pipe),
+	params->cursor.plane = igt_crtc_get_plane_type(crtc,
 						       DRM_PLANE_TYPE_CURSOR);
 	params->cursor.fb = NULL;
 	params->cursor.x = 0;
@@ -1132,7 +1691,7 @@ static void init_mode_params(struct modeset_params *params,
 	params->cursor.w = 64;
 	params->cursor.h = 64;
 
-	params->sprite.plane = igt_crtc_get_plane_type(igt_crtc_for_pipe(&drm.display, pipe),
+	params->sprite.plane = igt_crtc_get_plane_type(crtc,
 						       DRM_PLANE_TYPE_OVERLAY);
 	igt_require(params->sprite.plane);
 	params->sprite.fb = NULL;
@@ -1158,9 +1717,9 @@ static void init_mode_params(struct modeset_params *params,
 
 static bool find_connector(bool edp_only, bool pipe_a,
 			   igt_output_t *forbidden_output,
-			   enum pipe forbidden_pipe,
+			   igt_crtc_t *forbidden_crtc,
 			   igt_output_t **ret_output,
-			   enum pipe *ret_pipe)
+			   igt_crtc_t **ret_crtc)
 {
 	igt_output_t *output;
 	igt_crtc_t *crtc;
@@ -1174,7 +1733,7 @@ static bool find_connector(bool edp_only, bool pipe_a,
 		if (pipe_a && crtc->pipe != PIPE_A)
 			continue;
 
-		if (output == forbidden_output || crtc->pipe == forbidden_pipe) {
+		if (output == forbidden_output || crtc == forbidden_crtc) {
 			igt_output_set_crtc(output,
 					    crtc);
 			igt_output_override_mode(output, connector_get_mode(output));
@@ -1190,7 +1749,7 @@ static bool find_connector(bool edp_only, bool pipe_a,
 		igt_output_override_mode(output, connector_get_mode(output));
 		if (intel_pipe_output_combo_valid(&drm.display)) {
 			*ret_output = output;
-			*ret_pipe = crtc->pipe;
+			*ret_crtc = crtc;
 			return true;
 		}
 	}
@@ -1201,7 +1760,7 @@ static bool find_connector(bool edp_only, bool pipe_a,
 static bool init_modeset_cached_params(void)
 {
 	igt_output_t *prim_output = NULL, *scnd_output = NULL;
-	enum pipe prim_pipe, scnd_pipe;
+	igt_crtc_t *prim_crtc, *scnd_crtc;
 
 	/*
 	 * We have this problem where PSR is only present on eDP monitors and
@@ -1211,29 +1770,29 @@ static bool init_modeset_cached_params(void)
 	 * TODO: refactor the code in a way that allows us to have different
 	 * sets of prim/scnd structs for different features.
 	 */
-	find_connector(true, true, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+	find_connector(true, true, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(true, false, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(true, false, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(false, true, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(false, true, NULL, NULL, &prim_output, &prim_crtc);
 	if (!prim_output)
-		find_connector(false, false, NULL, PIPE_NONE, &prim_output, &prim_pipe);
+		find_connector(false, false, NULL, NULL, &prim_output, &prim_crtc);
 
 	if (!prim_output)
 		return false;
 
-	find_connector(false, false, prim_output, prim_pipe,
-		       &scnd_output, &scnd_pipe);
+	find_connector(false, false, prim_output, prim_crtc,
+		       &scnd_output, &scnd_crtc);
 
-	init_mode_params(&prim_mode_params, prim_output, prim_pipe);
+	init_mode_params(&prim_mode_params, prim_output, prim_crtc);
 
 	if (!scnd_output) {
-		scnd_mode_params.pipe = PIPE_NONE;
+		scnd_mode_params.crtc = NULL;
 		scnd_mode_params.output = NULL;
 		return true;
 	}
 
-	init_mode_params(&scnd_mode_params, scnd_output, scnd_pipe);
+	init_mode_params(&scnd_mode_params, scnd_output, scnd_crtc);
 	return true;
 }
 
@@ -1520,8 +2079,7 @@ static void __set_prim_plane_for_params(struct modeset_params *params)
 static void __set_mode_for_params(struct modeset_params *params)
 {
 	igt_output_override_mode(params->output, &params->mode);
-	igt_output_set_crtc(params->output,
-			    igt_crtc_for_pipe(params->output->display, params->pipe));
+	igt_output_set_crtc(params->output, params->crtc);
 
 	__set_prim_plane_for_params(params);
 }
@@ -1535,10 +2093,8 @@ static void set_mode_for_params(struct modeset_params *params)
 static void __debugfs_read_crtc(const char *param, char *buf, int len)
 {
 	int dir;
-	enum pipe pipe;
 
-	pipe = prim_mode_params.pipe;
-	dir = igt_debugfs_crtc_dir(drm.fd, pipe, O_DIRECTORY);
+	dir = igt_crtc_debugfs_dir(prim_mode_params.crtc);
 	igt_require_fd(dir);
 	igt_debugfs_simple_read(dir, param, buf, len);
 	close(dir);
@@ -1686,12 +2242,12 @@ static bool fbc_psr_not_possible(void)
 	return strstr(buf, "FBC disabled: PSR1 enabled (Wa_14016291713)");
 }
 
-static bool fbc_enable_per_plane(int plane_index, enum pipe pipe)
+static bool fbc_enable_per_plane(int plane_index, igt_crtc_t *crtc)
 {
 	char buf[PATH_MAX];
 	char buf_plane[128];
 
-	sprintf(buf_plane, "%d%s", plane_index, kmstest_pipe_name(pipe));
+	sprintf(buf_plane, "%d%s", plane_index, igt_crtc_name(crtc));
 
 	debugfs_read_crtc("i915_fbc_status", buf);
 	return strstr(strstr(buf, "*"), buf_plane);
@@ -1900,13 +2456,20 @@ static void unset_all_crtcs(void)
 	igt_display_commit(&drm.display);
 }
 
+static void intel_hdr_disable(igt_output_t *output)
+{
+	igt_hdr_disable(output);
+}
+
 static bool disable_features(const struct test_mode *t)
 {
 	if (t->feature == FEATURE_DEFAULT)
 		return false;
 
-	intel_fbc_disable(drm.fd);
-	intel_drrs_disable(drm.fd, prim_mode_params.pipe);
+	intel_fbc_disable(&drm.display);
+	intel_drrs_disable(prim_mode_params.crtc);
+	if (hdr.can_test)
+		intel_hdr_disable(prim_mode_params.output);
 
 	return psr.can_test ? psr_disable(drm.fd, drm.debugfs, NULL) : false;
 }
@@ -1980,14 +2543,13 @@ static void init_blue_crc(enum pixel_format format, enum tiling_type tiling)
 
 	fill_fb(&blue, COLOR_PRIM_BG);
 
-	igt_output_set_crtc(prim_mode_params.output,
-			    igt_crtc_for_pipe(prim_mode_params.output->display, prim_mode_params.pipe));
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
 	igt_plane_set_fb(prim_mode_params.primary.plane, &blue);
 	igt_display_commit(&drm.display);
 
 	if (!pipe_crc) {
-		pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(&drm.display, prim_mode_params.pipe),
+		pipe_crc = igt_crtc_crc_new(prim_mode_params.crtc,
 					    IGT_PIPE_CRC_SOURCE_AUTO);
 		igt_assert(pipe_crc);
 	}
@@ -2036,8 +2598,7 @@ static void init_crcs(enum pixel_format format, enum tiling_type tiling,
 					 IGT_DRAW_PWRITE : IGT_DRAW_BLT, r);
 	}
 
-	igt_output_set_crtc(prim_mode_params.output,
-			    igt_crtc_for_pipe(prim_mode_params.output->display, prim_mode_params.pipe));
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
 	for (r = 0; r < pattern->n_rects; r++) {
 		igt_plane_set_fb(prim_mode_params.primary.plane, &tmp_fbs[r]);
@@ -2155,7 +2716,7 @@ static void teardown_crcs(void)
 
 static void setup_fbc(void)
 {
-	if (!intel_fbc_supported_on_chipset(drm.fd, prim_mode_params.pipe)) {
+	if (!intel_fbc_supported(prim_mode_params.crtc)) {
 		igt_info("Can't test FBC: not supported on this chipset\n");
 		return;
 	}
@@ -2167,6 +2728,17 @@ static void setup_fbc(void)
 
 static void teardown_fbc(void)
 {
+}
+
+static void teardown_hdr(void)
+{
+	if (!hdr.can_test)
+		return;
+
+	/* Disable HDR and restore connector state */
+	intel_hdr_disable(prim_mode_params.output);
+
+	hdr.can_test = false;
 }
 
 static void setup_psr(void)
@@ -2195,12 +2767,35 @@ static void setup_drrs(void)
 		return;
 	}
 
-	if (!intel_is_drrs_supported(drm.fd, prim_mode_params.pipe)) {
+	if (!intel_is_drrs_supported(prim_mode_params.crtc)) {
 		igt_info("Can't test DRRS: Not supported.\n");
 		return;
 	}
 
 	drrs.can_test = true;
+}
+
+static void setup_hdr(void)
+{
+	if (!igt_output_has_prop(prim_mode_params.output, IGT_CONNECTOR_MAX_BPC) ||
+	    !igt_output_get_prop(prim_mode_params.output, IGT_CONNECTOR_MAX_BPC) ||
+	    !igt_output_supports_hdr(prim_mode_params.output)) {
+		igt_info("Can't test HDR: %s doesn't support IGT_CONNECTOR_MAX_BPC or IGT_CONNECTOR_HDR_OUTPUT_METADATA.\n",
+			  igt_output_name(prim_mode_params.output));
+		return;
+	}
+
+	if (!igt_is_panel_hdr(drm.fd, prim_mode_params.output)) {
+		igt_info("Can't test HDR: %s not HDR capable.\n", igt_output_name(prim_mode_params.output));
+		return;
+	}
+
+	if (igt_get_output_max_bpc(prim_mode_params.output) < 10) {
+		igt_info("Can't test HDR: %s doesn't support 10 bpc.\n", igt_output_name(prim_mode_params.output));
+		return;
+	}
+
+	hdr.can_test = true;
 }
 
 static void setup_environment(void)
@@ -2210,6 +2805,7 @@ static void setup_environment(void)
 	setup_fbc();
 	setup_psr();
 	setup_drrs();
+	setup_hdr();
 
 	setup_crcs();
 }
@@ -2221,6 +2817,7 @@ static void teardown_environment(void)
 	teardown_crcs();
 	teardown_psr();
 	teardown_fbc();
+	teardown_hdr();
 	teardown_modeset();
 	teardown_drm();
 }
@@ -2297,6 +2894,10 @@ static void do_flush(const struct test_mode *t)
 
 #define ASSERT_NO_IDLE_GPU		(1 << 11)
 
+#define HDR_ASSERT_FLAGS               (3 << 12)
+#define ASSERT_HDR_ENABLED             (1 << 12)
+#define ASSERT_HDR_DISABLED            (1 << 13)
+
 static int adjust_assertion_flags(const struct test_mode *t, int flags)
 {
 	if (!(flags & DONT_ASSERT_FEATURE_STATUS)) {
@@ -2307,6 +2908,8 @@ static int adjust_assertion_flags(const struct test_mode *t, int flags)
 		if (!((flags & ASSERT_DRRS_LOW) ||
 		    (flags & ASSERT_DRRS_INACTIVE)))
 			flags |= ASSERT_DRRS_HIGH;
+		if (!(flags & ASSERT_HDR_DISABLED))
+			flags |= ASSERT_HDR_ENABLED;
 	}
 
 	if ((t->feature & FEATURE_FBC) == 0 || (flags & DONT_ASSERT_FBC_STATUS))
@@ -2315,6 +2918,8 @@ static int adjust_assertion_flags(const struct test_mode *t, int flags)
 		flags &= ~PSR_ASSERT_FLAGS;
 	if ((t->feature & FEATURE_DRRS) == 0)
 		flags &= ~DRRS_ASSERT_FLAGS;
+	if ((t->feature & FEATURE_HDR) == 0)
+		flags &= ~HDR_ASSERT_FLAGS;
 
 	return flags;
 }
@@ -2331,6 +2936,27 @@ static void do_crc_assertions(int flags)
 
 	igt_assert(wanted_crc);
 	igt_assert_crc_equal(&crc, wanted_crc);
+}
+
+static bool intel_hdr_is_enabled(igt_output_t *output)
+{
+	uint64_t blob_id =
+		igt_output_get_prop(output, IGT_CONNECTOR_HDR_OUTPUT_METADATA);
+	uint64_t max_bpc =
+		igt_output_get_prop(output, IGT_CONNECTOR_MAX_BPC);
+
+	return blob_id != 0 && max_bpc >= 10;
+}
+
+static void hdr_print_status(igt_output_t *output)
+{
+	uint64_t blob_id =
+		igt_output_get_prop(output, IGT_CONNECTOR_HDR_OUTPUT_METADATA);
+	uint64_t max_bpc =
+		igt_output_get_prop(output, IGT_CONNECTOR_MAX_BPC);
+
+	igt_info("HDR metadata blob id: %" PRIu64 "\n", blob_id);
+	igt_info("MAX_BPC: %" PRIu64 "\n", max_bpc);
 }
 
 static void do_status_assertions(int flags)
@@ -2352,7 +2978,7 @@ static void do_status_assertions(int flags)
 			igt_assert_f(false, "DRRS LOW\n");
 		}
 	} else if (flags & ASSERT_DRRS_INACTIVE) {
-		if (!intel_is_drrs_inactive(drm.fd, prim_mode_params.pipe)) {
+		if (!intel_is_drrs_inactive(prim_mode_params.crtc)) {
 			drrs_print_status();
 			igt_assert_f(false, "DRRS INACTIVE\n");
 		}
@@ -2363,18 +2989,15 @@ static void do_status_assertions(int flags)
 		igt_require(!fbc_stride_not_supported());
 		igt_require(!fbc_mode_too_large());
 		igt_require(!fbc_psr_not_possible());
-		if (!intel_fbc_wait_until_enabled(drm.fd, prim_mode_params.pipe)) {
-			igt_assert_f(intel_fbc_is_enabled(drm.fd,
-						    prim_mode_params.pipe,
-						    IGT_LOG_WARN),
+		if (!intel_fbc_wait_until_enabled(prim_mode_params.crtc)) {
+			igt_assert_f(intel_fbc_is_enabled(prim_mode_params.crtc, IGT_LOG_WARN),
 				     "FBC disabled\n");
 		}
 
 		if (opt.fbc_check_compression)
 			igt_assert(fbc_wait_for_compression());
 	} else if (flags & ASSERT_FBC_DISABLED) {
-		igt_assert(!intel_fbc_wait_until_enabled(drm.fd,
-						   prim_mode_params.pipe));
+		igt_assert(!intel_fbc_wait_until_enabled(prim_mode_params.crtc));
 	}
 
 	if (flags & ASSERT_PSR_ENABLED) {
@@ -2384,6 +3007,18 @@ static void do_status_assertions(int flags)
 	} else if (flags & ASSERT_PSR_DISABLED)
 		igt_assert_f(psr_wait_update(drm.debugfs, PSR_MODE_1, NULL),
 			     "PSR still enabled\n");
+
+	if (flags & ASSERT_HDR_ENABLED) {
+		if (!intel_hdr_is_enabled(prim_mode_params.output)) {
+			hdr_print_status(prim_mode_params.output);
+			igt_assert_f(false, "HDR not enabled\n");
+		}
+	} else if (flags & ASSERT_HDR_DISABLED) {
+		if (intel_hdr_is_enabled(prim_mode_params.output)) {
+			hdr_print_status(prim_mode_params.output);
+			igt_assert_f(false, "HDR still enabled\n");
+		}
+	}
 }
 
 static void __do_assertions(const struct test_mode *t, int flags,
@@ -2401,7 +3036,8 @@ static void __do_assertions(const struct test_mode *t, int flags,
 
 	/* Check the CRC to make sure the drawing operations work
 	 * immediately, independently of the features being enabled. */
-	do_crc_assertions(flags);
+	if (!(t->feature & FEATURE_HDR))
+		do_crc_assertions(flags);
 
 	/* Now we can flush things to make the test faster. */
 	do_flush(t);
@@ -2413,7 +3049,7 @@ static void __do_assertions(const struct test_mode *t, int flags,
 	 * case, the first check should be enough and a new CRC check
 	 * would only delay the test suite while adding no value to the
 	 * test suite. */
-	if (t->screen == SCREEN_PRIM)
+	if (!(t->feature & FEATURE_HDR) && t->screen == SCREEN_PRIM)
 		do_crc_assertions(flags);
 
 	if (fbc.supports_last_action && opt.fbc_check_last_action) {
@@ -2443,10 +3079,8 @@ static void update_modeset_cached_params(enum igt_draw_method method)
 {
 	bool found = false;
 
-	igt_output_set_crtc(prim_mode_params.output,
-			    igt_crtc_for_pipe(prim_mode_params.output->display, prim_mode_params.pipe));
-	igt_output_set_crtc(scnd_mode_params.output,
-			    igt_crtc_for_pipe(scnd_mode_params.output->display, scnd_mode_params.pipe));
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
+	igt_output_set_crtc(scnd_mode_params.output, scnd_mode_params.crtc);
 
 	found = igt_override_all_active_output_modes_to_fit_bw(&drm.display);
 	igt_require_f(found, "No valid mode combo found.\n");
@@ -2514,7 +3148,7 @@ static void set_plane_for_test_fbc(const struct test_mode *t, igt_plane_t *plane
 	struct igt_fb fb;
 	uint64_t color;
 
-	igt_info("Testing fbc on plane %i%s\n", plane->index + 1, kmstest_pipe_name(prim_mode_params.pipe));
+	igt_info("Testing fbc on plane %i%s\n", plane->index + 1, igt_crtc_name(prim_mode_params.crtc));
 
 	create_fb(t->format, prim_mode_params.mode.hdisplay, prim_mode_params.mode.vdisplay, t->tiling, t->plane, &fb);
 	color = pick_color(&fb, COLOR_PRIM_BG);
@@ -2530,11 +3164,16 @@ static void set_plane_for_test_fbc(const struct test_mode *t, igt_plane_t *plane
 
 	fbc_update_last_action();
 	do_assertions(ASSERT_FBC_ENABLED | ASSERT_NO_ACTION_CHANGE);
-	igt_assert_f(fbc_enable_per_plane(plane->index + 1, prim_mode_params.pipe), "FBC disabled\n");
+	igt_assert_f(fbc_enable_per_plane(plane->index + 1, prim_mode_params.crtc), "FBC disabled\n");
 
 	igt_remove_fb(drm.fd, &fb);
 	igt_plane_set_fb(plane, NULL);
 	igt_display_commit2(&drm.display, COMMIT_ATOMIC);
+}
+
+static void intel_hdr_enable(igt_output_t *output)
+{
+	igt_hdr_enable(output);
 }
 
 static bool enable_features_for_test(const struct test_mode *t)
@@ -2545,11 +3184,15 @@ static bool enable_features_for_test(const struct test_mode *t)
 		return false;
 
 	if (t->feature & FEATURE_FBC)
-		intel_fbc_enable(drm.fd);
+		intel_fbc_enable(&drm.display);
 	if (t->feature & FEATURE_PSR)
-		ret = psr_enable(drm.fd, drm.debugfs, PSR_MODE_1, NULL);
+		ret |= psr_enable(drm.fd, drm.debugfs, PSR_MODE_1, NULL);
 	if (t->feature & FEATURE_DRRS)
-		intel_drrs_enable(drm.fd, prim_mode_params.pipe);
+		intel_drrs_enable(prim_mode_params.crtc);
+	if (t->feature & FEATURE_HDR) {
+		intel_hdr_enable(prim_mode_params.output);
+		ret |= true;   /* HDR metadata must force a commit */
+	}
 
 	return ret;
 }
@@ -2572,6 +3215,11 @@ static void check_test_requirements(const struct test_mode *t)
 	if (t->feature & FEATURE_DRRS)
 		igt_require_f(drrs.can_test,
 			      "Can't test DRRS with the current outputs\n");
+
+	if (t->feature & FEATURE_HDR) {
+		igt_require_f(hdr.can_test,
+			      "Can't test HDR with the current outputs\n");
+	}
 
 	/*
 	 * In kernel, When PSR is enabled, DRRS will be disabled. So If a test
@@ -2649,9 +3297,15 @@ static void prepare_subtest_data(const struct test_mode *t,
 	if (need_modeset)
 		igt_display_commit(&drm.display);
 
-	init_blue_crc(t->format, t->tiling);
-	if (pattern)
-		init_crcs(t->format, t->tiling, pattern);
+	/*
+	 * HDR alters the output (EOTF, tone-mapping, bpc), so CRCs won't match
+	 * the SDR reference CRCs. Skip CRC checks for HDR tests.
+	 */
+	if (!(t->feature & FEATURE_HDR)) {
+		init_blue_crc(t->format, t->tiling);
+		if (pattern)
+			init_crcs(t->format, t->tiling, pattern);
+	}
 
 	need_modeset = enable_features_for_test(t);
 	if (need_modeset)
@@ -2712,9 +3366,23 @@ static void rte_subtest(const struct test_mode *t)
 
 	prepare_subtest_data(t, NULL);
 
+	/*
+	 * unset_all_crtcs() clears HDR metadata (blob_id becomes 0).
+	 * After verifying the disabled state, re-arm HDR props on the
+	 * output so the next modeset picks them up.
+	 */
 	unset_all_crtcs();
 	do_assertions(ASSERT_FBC_DISABLED | ASSERT_PSR_DISABLED |
-		      DONT_ASSERT_CRC | ASSERT_DRRS_INACTIVE);
+		      DONT_ASSERT_CRC | ASSERT_DRRS_INACTIVE |
+		      ASSERT_HDR_DISABLED);
+
+	/*
+	 * Re-arm HDR props on the in-memory output object.
+	 * This only stages the state; the actual commit happens
+	 * inside enable_prim_screen_and_wait().
+	 */
+	if (t->feature & FEATURE_HDR)
+		intel_hdr_enable(prim_mode_params.output);
 
 	if (t->pipes == PIPE_SINGLE)
 		enable_prim_screen_and_wait(t);
@@ -2769,12 +3437,12 @@ static void plane_fbc_rte_subtest(const struct test_mode *t)
 	do_assertions(ASSERT_FBC_DISABLED | DONT_ASSERT_CRC);
 
 	igt_output_override_mode(prim_mode_params.output, &prim_mode_params.mode);
-	igt_output_set_crtc(prim_mode_params.output,
-			    igt_crtc_for_pipe(prim_mode_params.output->display, prim_mode_params.pipe));
+	igt_output_set_crtc(prim_mode_params.output, prim_mode_params.crtc);
 
 	wanted_crc = &blue_crcs[t->format].crc;
 
-	for_each_plane_on_pipe(&drm.display, prim_mode_params.pipe, plane) {
+	for_each_plane_on_crtc(prim_mode_params.crtc,
+			       plane) {
 		if (!is_valid_plane(plane))
 			continue;
 
@@ -3164,8 +3832,7 @@ static void page_flip_for_params(struct modeset_params *params,
 
 	switch (type) {
 	case FLIP_PAGEFLIP:
-		rc = drmModePageFlip(drm.fd,
-				     igt_crtc_for_pipe(&drm.display, params->pipe)->crtc_id,
+		rc = drmModePageFlip(drm.fd, params->crtc->crtc_id,
 				     params->primary.fb->fb_id,
 				     DRM_MODE_PAGE_FLIP_EVENT, NULL);
 		igt_assert_eq(rc, 0);
@@ -3603,6 +4270,13 @@ static void modesetfrombusy_subtest(const struct test_mode *t)
 	usleep(10000);
 
 	unset_all_crtcs();
+	/*
+	 * Re-arm HDR props on the in-memory output object.
+	 * This only stages the state; the actual commit happens
+	 * inside set_mode_for_params().
+	 */
+	if (t->feature & FEATURE_HDR)
+		intel_hdr_enable(prim_mode_params.output);
 	params->primary.fb = &fb2;
 	set_mode_for_params(params);
 
@@ -3639,8 +4313,16 @@ static void suspend_subtest(const struct test_mode *t)
 	unset_all_crtcs();
 	igt_system_suspend_autoresume(SUSPEND_STATE_MEM, SUSPEND_TEST_NONE);
 	do_assertions(ASSERT_FBC_DISABLED | ASSERT_PSR_DISABLED |
-		      DONT_ASSERT_CRC | ASSERT_DRRS_INACTIVE);
+		      DONT_ASSERT_CRC | ASSERT_DRRS_INACTIVE |
+		      ASSERT_HDR_DISABLED);
 
+	/*
+	 * Re-arm HDR props on the in-memory output object.
+	 * This only stages the state; the actual commit happens
+	 * inside set_mode_for_params().
+	 */
+	if (t->feature & FEATURE_HDR)
+		intel_hdr_enable(prim_mode_params.output);
 	set_mode_for_params(params);
 	do_assertions(0);
 }
@@ -3778,7 +4460,7 @@ static void stridechange_subtest(const struct test_mode *t)
 	 * with the atomic page flip helper, but not with the legacy page flip.
 	 */
 	rc = drmModePageFlip(drm.fd,
-			     igt_crtc_for_pipe(&drm.display, params->pipe)->crtc_id,
+			     params->crtc->crtc_id,
 			     new_fb->fb_id, 0, NULL);
 	igt_assert(rc == -EINVAL || rc == 0);
 	do_assertions(rc ? 0 : DONT_ASSERT_FBC_STATUS);
@@ -4042,12 +4724,36 @@ static const char *feature_str(int feature)
 		return "fbc";
 	case FEATURE_PSR:
 		return "psr";
-	case FEATURE_FBC | FEATURE_PSR:
-		return "fbcpsr";
 	case FEATURE_DRRS:
 		return "drrs";
+	case FEATURE_HDR:
+		return "hdr";
+	case FEATURE_FBC | FEATURE_PSR:
+		return "fbcpsr";
 	case FEATURE_FBC | FEATURE_DRRS:
-		return "fbcdrrs";
+	        return "fbcdrrs";
+	case FEATURE_FBC | FEATURE_HDR:
+	        return "fbchdr";
+
+	case FEATURE_PSR | FEATURE_DRRS:
+		return "psrdrrs";
+	case FEATURE_PSR | FEATURE_HDR:
+	        return "psrhdr";
+	case FEATURE_DRRS | FEATURE_HDR:
+	        return "drrshdr";
+
+	case FEATURE_FBC | FEATURE_PSR | FEATURE_DRRS:
+		return "fbcpsrdrrs";
+	case FEATURE_FBC | FEATURE_PSR | FEATURE_HDR:
+		return "fbcpsrhdr";
+	case FEATURE_FBC | FEATURE_DRRS | FEATURE_HDR:
+		return "fbcdrrshdr";
+	case FEATURE_PSR | FEATURE_DRRS | FEATURE_HDR:
+		return "psrdrrshdr";
+
+	case FEATURE_FBC | FEATURE_PSR | FEATURE_DRRS | FEATURE_HDR:
+		return "fbcpsrdrrshdr";
+
 	default:
 		igt_assert(false);
 	}
@@ -4210,7 +4916,7 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 	igt_subtest_group() {
 		igt_subtest_with_dynamic("pipe-fbc-rte") {
 
-			enum pipe default_pipe = prim_mode_params.pipe;
+			igt_crtc_t *default_crtc = prim_mode_params.crtc;
 
 			t.pipes = PIPE_SINGLE;
 			t.feature = FEATURE_FBC;
@@ -4226,12 +4932,12 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 				      "FBC isn't supported on BMG\n");
 
 			for_each_crtc(&drm.display, crtc) {
-				if (crtc->pipe == default_pipe) {
+				if (crtc == default_crtc) {
 					igt_info("pipe-%s: FBC validated in other subtest\n", igt_crtc_name(crtc));
 					continue;
 				}
 
-				if (!intel_fbc_supported_on_chipset(drm.fd, crtc->pipe)) {
+				if (!intel_fbc_supported(crtc)) {
 					igt_info("Can't test FBC: not supported on pipe-%s\n", igt_crtc_name(crtc));
 					continue;
 				}
@@ -4239,8 +4945,8 @@ int igt_main_args("", long_options, help_str, opt_handler, NULL)
 				pipe_crc = NULL;
 				setup_crcs();
 
-				for_each_valid_output_on_pipe(&drm.display, crtc->pipe, output) {
-					init_mode_params(&prim_mode_params, output, crtc->pipe);
+				for_each_valid_output_on_crtc(&drm.display, crtc, output) {
+					init_mode_params(&prim_mode_params, output, crtc);
 					setup_fbc();
 
 					igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),

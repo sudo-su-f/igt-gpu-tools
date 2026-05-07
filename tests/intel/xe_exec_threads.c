@@ -502,7 +502,7 @@ test_legacy_mode(int fd, uint32_t vm, uint64_t addr, uint64_t userptr,
 		.num_syncs = 2,
 		.syncs = to_user_pointer(sync),
 	};
-	uint32_t exec_queues[MAX_N_EXEC_QUEUES];
+	uint32_t exec_queues[MAX_N_EXEC_QUEUES] = {};
 	uint32_t bind_exec_queues[MAX_N_EXEC_QUEUES];
 	uint32_t syncobjs[MAX_N_EXEC_QUEUES];
 	size_t bo_size;
@@ -1141,7 +1141,7 @@ static void threads(int fd, int flags)
 	int gt;
 
 	xe_for_each_engine(fd, hwe) {
-		if ((flags & MULTI_QUEUE) && !xe_engine_class_supports_multi_queue(hwe->engine_class))
+		if ((flags & MULTI_QUEUE) && !xe_engine_class_supports_multi_queue(fd, hwe->engine_class))
 			continue;
 		++n_engines;
 	}
@@ -1170,7 +1170,7 @@ static void threads(int fd, int flags)
 	}
 
 	xe_for_each_engine(fd, hwe) {
-		if ((flags & MULTI_QUEUE) && !xe_engine_class_supports_multi_queue(hwe->engine_class))
+		if ((flags & MULTI_QUEUE) && !xe_engine_class_supports_multi_queue(fd, hwe->engine_class))
 			continue;
 		threads_data[i].mutex = &mutex;
 		threads_data[i].cond = &cond;
@@ -1210,6 +1210,12 @@ static void threads(int fd, int flags)
 					continue;
 
 				while (*data_flags >= 0) {
+					if ((*data_flags & PARALLEL) &&
+					    !xe_engine_class_supports_multi_lrc(fd, class)) {
+						data_flags++;
+						continue;
+					}
+
 					threads_data[i].mutex = &mutex;
 					threads_data[i].cond = &cond;
 					if (flags & SHARED_VM)

@@ -84,11 +84,9 @@ static bool is_4k(drmModeModeInfo mode)
 	        mode.vrefresh >= VREFRESH);
 }
 
-static bool is_equal(drmModeModeInfo mode_hi, drmModeModeInfo mode_lo)
+static bool has_same_dotclock(drmModeModeInfo mode_hi, drmModeModeInfo mode_lo)
 {
-	return (mode_hi.hdisplay == mode_lo.hdisplay &&
-		mode_hi.vdisplay == mode_lo.vdisplay &&
-		mode_hi.vrefresh == mode_lo.vrefresh);
+	return mode_hi.clock == mode_lo.clock;
 }
 
 static drmModeModeInfo *get_lowres_mode(igt_output_t *output)
@@ -118,9 +116,10 @@ static void do_cleanup_display(igt_display_t *dpy)
 	igt_output_t *output;
 	igt_plane_t *plane;
 
-	for_each_crtc(dpy, crtc)
-		for_each_plane_on_pipe(dpy, crtc->pipe, plane)
+	for_each_crtc(dpy, crtc) {
+		for_each_plane_on_crtc(crtc, plane)
 			igt_plane_set_fb(plane, NULL);
+	}
 
 	for_each_connected_output(dpy, output)
 		igt_output_set_crtc(output, NULL);
@@ -128,10 +127,10 @@ static void do_cleanup_display(igt_display_t *dpy)
 	igt_display_commit2(dpy, dpy->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 }
 
-static void test_plane_scaling(data_t *data, enum pipe pipe, igt_output_t *output)
+static void test_plane_scaling(data_t *data, igt_crtc_t *crtc,
+			       igt_output_t *output)
 {
 	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe);
 	int cdclk_ref, cdclk_new;
 	struct igt_fb fb;
 	igt_plane_t *primary;
@@ -184,10 +183,10 @@ static void test_plane_scaling(data_t *data, enum pipe pipe, igt_output_t *outpu
 	}
 }
 
-static void test_mode_transition(data_t *data, enum pipe pipe, igt_output_t *output)
+static void test_mode_transition(data_t *data, igt_crtc_t *crtc,
+				 igt_output_t *output)
 {
 	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe);
 	int cdclk_ref, cdclk_new;
 	struct igt_fb fb;
 	igt_plane_t *primary;
@@ -203,7 +202,7 @@ static void test_mode_transition(data_t *data, enum pipe pipe, igt_output_t *out
 	igt_require_f(is_4k(mode_hi), "Mode >= 4K not found on output %s\n",
 	              igt_output_name(output));
 
-	igt_skip_on_f(is_equal(mode_hi, mode_lo), "Highest and lowest mode resolutions are same; no transition\n");
+	igt_skip_on_f(has_same_dotclock(mode_hi, mode_lo), "Highest and lowest modes have same dotclock; no CDCLK bump expected\n");
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 
@@ -239,11 +238,12 @@ static void set_mode(data_t *data, int count, drmModeModeInfo *mode,
 		     igt_output_t **valid_outputs, struct igt_fb fb)
 {
 	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc;
-	igt_plane_t *plane;
+	igt_crtc_t *crtc = NULL;
 
 	for (int i = 0; i < count; i++) {
-		crtc = igt_crtc_for_pipe(display, i);
+		igt_plane_t *plane;
+
+		crtc = igt_next_crtc(display, crtc);
 		plane = igt_crtc_get_plane_type(crtc, DRM_PLANE_TYPE_PRIMARY);
 
 		igt_output_override_mode(valid_outputs[i], &mode[i]);
@@ -260,6 +260,7 @@ static void test_mode_transition_on_all_outputs(data_t *data)
 	drmModeModeInfo *mode, mode_highres[IGT_MAX_PIPES] = {0}, mode_lowres[IGT_MAX_PIPES] = {0};
 	igt_output_t *valid_outputs[IGT_MAX_PIPES] = {NULL};
 	igt_output_t *output;
+	igt_crtc_t *crtc = NULL;
 	int count = 0;
 	int cdclk_ref, cdclk_new;
 	uint16_t width = 0, height = 0;
@@ -270,13 +271,16 @@ static void test_mode_transition_on_all_outputs(data_t *data)
 
 	for_each_connected_output(display, output) {
 		mode_highres[count] = *igt_output_get_highres_mode(output);
-		igt_require_f(is_4k(mode_highres[count]), "Mode >= 4K not found on output %s.\n",
-			      igt_output_name(output));
+		if (!is_4k(mode_highres[count])) {
+			igt_info("Mode >= 4K not found on output %s; skipping\n",
+				 igt_output_name(output));
+			continue;
+		}
 
 		mode_lowres[count] = *get_lowres_mode(output);
 
-		if (is_equal(mode_highres[count], mode_lowres[count])) {
-			igt_info("Highest and lowest mode resolutions are same on output %s; no transition will occur, skipping\n",
+		if (has_same_dotclock(mode_highres[count], mode_lowres[count])) {
+			igt_info("Highest and lowest modes have same dotclock on output %s; no CDCLK bump expected, skipping\n",
 				  igt_output_name(output));
 			continue;
 		}
@@ -289,14 +293,15 @@ static void test_mode_transition_on_all_outputs(data_t *data)
 		      "Number of valid outputs (%d) must be greater than or equal to 2\n", count);
 
 	for (int i = 0; i < count; i++) {
+		crtc = igt_next_crtc(display, crtc);
+
 		mode = igt_output_get_mode(valid_outputs[i]);
 		igt_assert(mode);
 
 		width = max(width, mode->hdisplay);
 		height = max(height, mode->vdisplay);
 
-		igt_output_set_crtc(valid_outputs[i],
-				    igt_crtc_for_pipe(display, i));
+		igt_output_set_crtc(valid_outputs[i], crtc);
 		igt_output_override_mode(valid_outputs[i], &mode_highres[i]);
 	}
 
@@ -338,9 +343,13 @@ static void run_cdclk_test(data_t *data, uint32_t flags)
 
 		igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc), output->name) {
 			if (flags & TEST_PLANESCALING)
-				test_plane_scaling(data, crtc->pipe, output);
+				test_plane_scaling(data,
+						   crtc,
+						   output);
 			if (flags & TEST_MODETRANSITION)
-				test_mode_transition(data, crtc->pipe, output);
+				test_mode_transition(data,
+						     crtc,
+						     output);
 		}
 	}
 }

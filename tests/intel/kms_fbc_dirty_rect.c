@@ -60,7 +60,7 @@ typedef struct {
 	drmModeModeInfo *mode;
 	igt_output_t *output;
 	igt_pipe_crc_t *pipe_crc;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	u32 format;
 
 	struct igt_fb fb[N_FBS];
@@ -122,9 +122,8 @@ set_fb_and_collect_crc(data_t *data, igt_plane_t *plane, struct igt_fb *fb,
 	igt_pipe_crc_start(data->pipe_crc);
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, crc);
 	igt_pipe_crc_stop(data->pipe_crc);
-	igt_assert_f(intel_fbc_is_enabled(data->drm_fd, data->pipe,
-					  IGT_LOG_INFO),
-					  "FBC is not enabled\n");
+	igt_assert_f(intel_fbc_is_enabled(data->crtc, IGT_LOG_INFO),
+		     "FBC is not enabled\n");
 }
 
 static void
@@ -402,29 +401,47 @@ static void cleanup(data_t *data)
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 }
 
+static bool check_fbc_supported(data_t *data)
+{
+	if (!intel_fbc_supported(data->crtc)) {
+		igt_info("FBC not supported by the chipset on pipe\n");
+		return false;
+	}
+
+	if (!intel_fbc_plane_size_supported(&data->display, data->mode->hdisplay,
+					    data->mode->vdisplay)) {
+		igt_info("Plane size not supported as per FBC size restrictions\n");
+		return false;
+	}
+
+	return true;
+}
+
 static bool prepare_test(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	igt_display_reset(&data->display);
 
 	data->mode = igt_output_get_mode(data->output);
 	igt_output_set_crtc(data->output,
-			    igt_crtc_for_pipe(display, data->pipe));
-	data->pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+			    data->crtc);
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_require_f(intel_fbc_supported_on_chipset(data->drm_fd, data->pipe),
-		      "FBC not supported by the chipset on pipe\n");
+	igt_require_f(check_fbc_supported(data), "FBC is not supported with this configuration\n");
 
-	if (psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_1, NULL) ||
-	    psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_2, NULL) ||
-	    psr_sink_support(data->drm_fd, data->debugfs_fd, PR_MODE, NULL)) {
-		igt_info("PSR is supported by the sink. Disabling PSR to test Dirty FBC functionality.\n");
-		psr_disable(data->drm_fd, data->debugfs_fd, data->output);
+	if (psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_1, data->output) ||
+	    psr_sink_support(data->drm_fd, data->debugfs_fd, PSR_MODE_2, data->output) ||
+	    psr_sink_support(data->drm_fd, data->debugfs_fd, PR_MODE, data->output)) {
+		igt_info("PSR/PR supported on %s, disabling for dirty FBC test\n",
+			 igt_output_name(data->output));
+
+		igt_require_f(psr_disable(data->drm_fd, data->debugfs_fd, data->output),
+			      "Failed to disable PSR/PR on %s\n",
+			      igt_output_name(data->output));
 	}
 
 	if (data->feature & FEATURE_FBC)
-		intel_fbc_enable(data->drm_fd);
+		intel_fbc_enable(&data->display);
 
 	return intel_pipe_output_combo_valid(&data->display);
 }
@@ -461,11 +478,12 @@ int igt_main()
 		data.feature = FEATURE_FBC;
 
 		for_each_crtc(&data.display, crtc) {
-			data.pipe = crtc->pipe;
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
@@ -486,11 +504,12 @@ int igt_main()
 		data.feature = FEATURE_FBC;
 
 		for_each_crtc(&data.display, crtc) {
-			data.pipe = crtc->pipe;
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				data.format = DRM_FORMAT_XRGB8888;
 
 				igt_dynamic_f("pipe-%s-%s",
@@ -513,11 +532,12 @@ int igt_main()
 		data.feature = FEATURE_FBC;
 
 		for_each_crtc(&data.display, crtc) {
-			data.pipe = crtc->pipe;
+			data.crtc = crtc;
 			if (single_pipe)
 				break;
-			for_each_valid_output_on_pipe(&data.display,
-						      crtc->pipe, data.output) {
+			for_each_valid_output_on_crtc(&data.display,
+						      crtc,
+						      data.output) {
 				for (int i = 0; i < num_formats; i++) {
 					/* on simulation platforms , limit to single format */
 					if (data.is_simulation && i > 0)

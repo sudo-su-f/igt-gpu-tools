@@ -112,7 +112,7 @@ static void test_spin(int fd, struct drm_xe_engine_class_instance *eci,
 #define MAX_N_EXECQUEUES	16
 #define GT_RESET			(0x1 << 0)
 #define CLOSE_FD			(0x1 << 1)
-#define CLOSE_EXEC_QUEUES	(0x1 << 2)
+#define CLOSE_EXEC_QUEUES		(0x1 << 2)
 #define VIRTUAL				(0x1 << 3)
 #define PARALLEL			(0x1 << 4)
 #define CAT_ERROR			(0x1 << 5)
@@ -124,6 +124,8 @@ static void test_spin(int fd, struct drm_xe_engine_class_instance *eci,
 #define LONG_SPIN_REUSE_QUEUE		(0x1 << 11)
 #define SYSTEM				(0x1 << 12)
 #define COMPRESSION			(0x1 << 13)
+#define MULTI_QUEUE			(0x1 << 14)
+#define SECONDARY_QUEUE			(0x1 << 15)
 
 /**
  * SUBTEST: %s-cat-error
@@ -184,7 +186,8 @@ test_balancer(int fd, int gt, int class, int n_exec_queues, int n_execs,
 		fd = drm_open_driver(DRIVER_XE);
 
 	num_placements = xe_gt_fill_engines_by_class(fd, gt, class, eci);
-	if (num_placements < 2)
+	if (num_placements < 2 ||
+	    ((flags & PARALLEL) && !xe_engine_class_supports_multi_lrc(fd, class)))
 		return;
 
 	vm = xe_vm_create(fd, 0, 0);
@@ -353,6 +356,45 @@ test_balancer(int fd, int gt, int class, int n_exec_queues, int n_execs,
  *
  * SUBTEST: cm-close-execqueues-close-fd
  * Description: Test compute mode close exec_queues close fd
+ *
+ * SUBTEST: multi-queue-cat-error
+ * Description: Test cat error with multi_queue
+ *
+ * SUBTEST: multi-queue-cat-error-on-secondary
+ * Description: Test cat error with multi_queue
+ *              on a secondary queue
+ *
+ * SUBTEST: multi-queue-gt-reset
+ * Description: Test GT reset with multi_queue
+ *
+ * SUBTEST: multi-queue-cancel
+ * Description: Test engine reset with multi_queue
+ *
+ * SUBTEST: multi-queue-cancel-on-secondary
+ * Description: Test engine reset with multi_queue
+ *              on a secondary queue
+ *
+ * SUBTEST: multi-queue-close-fd
+ * Description: Test close fd with multi_queue
+ *
+ * SUBTEST: multi-queue-close-execqueues
+ * Description: Test close execqueues with multi_queue
+ *
+ * SUBTEST: cm-multi-queue-cat-error
+ * Description: Test compute mode cat error with multi_queue
+ *
+ * SUBTEST: cm-multi-queue-cat-error-on-secondary
+ * Description: Test compute mode cat error with multi_queue
+ *              on a secondary queue
+ *
+ * SUBTEST: cm-multi-queue-gt-reset
+ * Description: Test compute mode GT reset with multi_queue
+ *
+ * SUBTEST: cm-multi-queue-close-fd
+ * Description: Test compute mode close fd with multi_queue
+ *
+ * SUBTEST: cm-multi-queue-close-execqueues
+ * Description: Test compute mode close execqueues with multi_queue
  */
 
 static void
@@ -384,8 +426,13 @@ test_compute_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	} *data;
 	struct xe_spin_opts spin_opts = { .preempt = flags & PREEMPT };
 	int i, b;
+	int hang_position = flags & SECONDARY_QUEUE ? 1 : 0;
 
 	igt_assert_lte(n_exec_queues, MAX_N_EXECQUEUES);
+
+	igt_assert_f(!(flags & SECONDARY_QUEUE) ||
+		     ((flags & MULTI_QUEUE) && (flags & CAT_ERROR)),
+		     "SECONDARY_QUEUE requires MULTI_QUEUE and CAT_ERROR to be set");
 
 	if (flags & CLOSE_FD)
 		fd = drm_open_driver(DRIVER_XE);
@@ -401,7 +448,20 @@ test_compute_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	memset(data, 0, bo_size);
 
 	for (i = 0; i < n_exec_queues; i++) {
-		exec_queues[i] = xe_exec_queue_create(fd, vm, eci, 0);
+		if (flags & MULTI_QUEUE) {
+			struct drm_xe_ext_set_property multi_queue = {
+				.base.next_extension = 0,
+				.base.name = DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+				.property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_GROUP,
+			};
+
+			uint64_t ext = to_user_pointer(&multi_queue);
+
+			multi_queue.value = i ? exec_queues[0] : DRM_XE_MULTI_GROUP_CREATE;
+			exec_queues[i] = xe_exec_queue_create(fd, vm, eci, ext);
+		} else {
+			exec_queues[i] = xe_exec_queue_create(fd, vm, eci, 0);
+		}
 	};
 
 	sync[0].addr = to_user_pointer(&data[0].vm_sync);
@@ -411,17 +471,21 @@ test_compute_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	data[0].vm_sync = 0;
 
 	for (i = 0; i < n_execs; i++) {
-		uint64_t base_addr = flags & CAT_ERROR && !i ?
-			addr + bo_size * 128 : addr;
+		uint64_t base_addr = (flags & CAT_ERROR && i == hang_position) ?
+				     (addr + bo_size * 128) : addr;
 		uint64_t batch_offset = (char *)&data[i].batch - (char *)data;
 		uint64_t batch_addr = base_addr + batch_offset;
 		uint64_t spin_offset = (char *)&data[i].spin - (char *)data;
 		uint64_t sdi_offset = (char *)&data[i].data - (char *)data;
 		uint64_t sdi_addr = base_addr + sdi_offset;
 		uint64_t exec_addr;
-		int e = i % n_exec_queues;
+		int err, e = i % n_exec_queues;
 
-		if (!i || flags & CANCEL) {
+		/*
+		 * For cat fault on a secondary queue the fault will
+		 * be on the spinner.
+		 */
+		if (i == hang_position) {
 			spin_opts.addr = base_addr + spin_offset;
 			xe_spin_init(&data[i].spin, &spin_opts);
 			exec_addr = spin_opts.addr;
@@ -442,7 +506,18 @@ test_compute_mode(int fd, struct drm_xe_engine_class_instance *eci,
 
 		exec.exec_queue_id = exec_queues[e];
 		exec.address = exec_addr;
-		xe_exec(fd, &exec);
+
+		/*
+		 * Secondary queues are reset when the primary queue
+		 * is reset. The submission can race here and it is
+		 * expected for those to fail submission if the primary
+		 * reset has already happened.
+		 */
+		err = __xe_exec(fd, &exec);
+		igt_assert(!err || ((flags & MULTI_QUEUE) && err == -ECANCELED));
+
+		if (i == hang_position && !(flags & CAT_ERROR))
+			xe_spin_wait_started(&data[i].spin);
 	}
 
 	if (flags & GT_RESET) {
@@ -461,26 +536,49 @@ test_compute_mode(int fd, struct drm_xe_engine_class_instance *eci,
 		return;
 	}
 
-	for (i = 1; i < n_execs; i++) {
+	for (i = 0; i < n_execs; i++) {
 		int64_t timeout = 3 * NSEC_PER_SEC;
 		int err;
 
 		err = __xe_wait_ufence(fd, &data[i].exec_sync, USER_FENCE_VALUE,
 				       exec_queues[i % n_exec_queues], &timeout);
-		if (flags & GT_RESET || flags & CAT_ERROR)
+		if (i == hang_position) {
+			igt_assert(err == -ETIME || err == -EIO);
+		} else if (flags & MULTI_QUEUE) {
+			/*
+			 * Currently any time GuC resets a queue submitted
+			 * by the KMD, the KMD will tear down the entire
+			 * queue group. This means we don't know whether
+			 * a particular queue submitted prior to the hanging
+			 * queue will complete or not. So we have to check
+			 * all possible return values here.
+			 */
+			igt_assert(err == -ETIME || err == -EIO || !err);
+		} else if (flags & GT_RESET || flags & CAT_ERROR) {
 			/* exec races with reset: may return -EIO or complete */
 			igt_assert(err == -EIO || !err);
-		else
+		} else {
 			igt_assert_eq(err, 0);
+		}
 	}
 
 	sync[0].addr = to_user_pointer(&data[0].vm_sync);
 	xe_vm_unbind_async(fd, vm, 0, 0, addr, bo_size, sync, 1);
 	xe_wait_ufence(fd, &data[0].vm_sync, USER_FENCE_VALUE, 0, 3 * NSEC_PER_SEC);
 
-	if (!(flags & (GT_RESET | CANCEL))) {
-		for (i = 1; i < n_execs; i++)
+	if (!(flags & (GT_RESET))) {
+		for (i = 0; i < n_execs; i++) {
+			/*
+			 * For multi-queue there is no guarantee which
+			 * queue will be scheduled first as they are all
+			 * submitted at the same priority in this test.
+			 * So we can't guarantee any data integrity here.
+			 */
+			if (i == hang_position || flags & MULTI_QUEUE)
+				continue;
+
 			igt_assert_eq(data[i].data, 0xc0ffee);
+		}
 	}
 
 	for (i = 0; i < n_exec_queues; i++)
@@ -978,6 +1076,108 @@ int igt_main()
 	igt_subtest("gt-mocs-reset")
 		xe_for_each_gt(fd, gt)
 			gt_mocs_reset(fd, gt);
+
+	igt_subtest("multi-queue-cat-error") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(fd, hwe, 16, 16,
+					    CAT_ERROR | MULTI_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-cat-error-on-secondary") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(fd, hwe, 16, 16,
+					    CAT_ERROR | MULTI_QUEUE |
+					    SECONDARY_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-gt-reset") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(fd, hwe, 16, 16,
+					    GT_RESET | MULTI_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-cancel") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(fd, hwe, 16, 16,
+					    MULTI_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-cancel-on-secondary") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(fd, hwe, 16, 16,
+					    MULTI_QUEUE | SECONDARY_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-close-fd") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(-1, hwe, 16, 256,
+					    CLOSE_FD | MULTI_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("multi-queue-close-execqueues") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			xe_legacy_test_mode(-1, hwe, 16, 256,
+					    CLOSE_EXEC_QUEUES | CLOSE_FD |
+					    MULTI_QUEUE,
+					    LEGACY_MODE_ADDR,
+					    false);
+	}
+
+	igt_subtest("cm-multi-queue-cat-error") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			test_compute_mode(fd, hwe, 16, 16,
+					  CAT_ERROR | MULTI_QUEUE);
+	}
+
+	igt_subtest("cm-multi-queue-cat-error-on-secondary") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			test_compute_mode(fd, hwe, 16, 16,
+					  CAT_ERROR | MULTI_QUEUE |
+					  SECONDARY_QUEUE);
+	}
+
+	igt_subtest("cm-multi-queue-gt-reset") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			test_compute_mode(fd, hwe, 16, 16,
+					  GT_RESET | MULTI_QUEUE);
+	}
+
+	igt_subtest("cm-multi-queue-close-fd") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			test_compute_mode(-1, hwe, 16, 256,
+					  CLOSE_FD | MULTI_QUEUE);
+	}
+
+	igt_subtest("cm-multi-queue-close-execqueues") {
+		igt_require(intel_graphics_ver(intel_get_drm_devid(fd)) >= IP_VER(35, 0));
+		xe_for_each_multi_queue_engine(fd, hwe)
+			test_compute_mode(-1, hwe, 16, 256,
+					  CLOSE_EXEC_QUEUES | CLOSE_FD |
+					  MULTI_QUEUE);
+	}
 
 	igt_fixture()
 		drm_close_driver(fd);

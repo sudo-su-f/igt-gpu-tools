@@ -82,7 +82,6 @@ typedef struct data {
 	igt_fb_t pfb;
 	igt_fb_t ofb;
 	igt_fb_t cfb;
-	enum pipe pipe_id;
 	int drm_fd;
 	rect_t rect;
 	uint64_t max_curw;
@@ -90,13 +89,10 @@ typedef struct data {
 } data_t;
 
 /* Common test setup. */
-static void test_init(data_t *data, enum pipe pipe_id, igt_output_t *output,
+static void test_init(data_t *data, igt_crtc_t *crtc, igt_output_t *output,
 		      unsigned int flags)
 {
-	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe_id);
-	data->pipe_id = crtc->pipe;
-	data->crtc = igt_crtc_for_pipe(display, data->pipe_id);
+	data->crtc = crtc;
 	data->output = output;
 
 	data->mode = igt_output_get_mode(data->output);
@@ -110,7 +106,7 @@ static void test_init(data_t *data, enum pipe pipe_id, igt_output_t *output,
 					       DRM_PLANE_TYPE_CURSOR);
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(data->pipe_id), igt_output_name(data->output));
+		 igt_crtc_name(data->crtc), igt_output_name(data->output));
 
 	igt_require_pipe_crc(data->drm_fd);
 	data->pipe_crc = igt_crtc_crc_new(data->crtc,
@@ -146,7 +142,6 @@ static void test_fini(data_t *data)
  */
 static void test_cursor_pos(data_t *data, int x, int y, unsigned int flags)
 {
-	igt_display_t *display = &data->display;
 	igt_crc_t ref_crc, test_crc;
 	cairo_t *cr;
 	igt_fb_t *ref_fb = &data->ref_fb;
@@ -194,7 +189,7 @@ static void test_cursor_pos(data_t *data, int x, int y, unsigned int flags)
 	/* Wait for one more vblank since cursor updates are not
 	 * synchronized to the same frame on AMD hw */
 	if(is_amdgpu_device(data->drm_fd))
-		igt_wait_for_vblank_count(igt_crtc_for_pipe(display, data->pipe_id),
+		igt_wait_for_vblank_count(data->crtc,
 					  1);
 
 	igt_pipe_crc_get_current(data->drm_fd, data->pipe_crc, &test_crc);
@@ -254,7 +249,6 @@ static void test_cleanup(data_t *data)
 
 static void test_cursor(data_t *data, int size, unsigned int flags)
 {
-	igt_display_t *display = &data->display;
 	int sw, sh;
 	int pad = 128;
 
@@ -284,7 +278,7 @@ static void test_cursor(data_t *data, int size, unsigned int flags)
 
 	igt_plane_set_fb(data->primary, &data->pfb);
 	igt_output_set_crtc(data->output,
-			    igt_crtc_for_pipe(display, data->pipe_id));
+			    data->crtc);
 	igt_display_commit2(&data->display, COMMIT_ATOMIC);
 
 	test_cursor_spots(data, size, flags);
@@ -347,7 +341,9 @@ int igt_main()
 				if (!intel_pipe_output_combo_valid(display))
 					continue;
 
-				test_init(&data, crtc->pipe, output,
+				test_init(&data,
+					  crtc,
+					  output,
 					  tests[i].flags);
 
 				for (j = 0; j < ARRAY_SIZE(cursor_sizes); j++) {

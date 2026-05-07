@@ -58,8 +58,8 @@
  * Description: Validate WRITEBACK_FB_ID with valid and invalid options
  *
  * SUBTEST: writeback-invalid-parameters
- * Description: Writeback has a couple of parameters linked together(output
- *              framebuffer and fence); this test goes throughthe combination
+ * Description: Writeback has a couple of parameters linked together (output
+ *              framebuffer and fence); this test goes through the combination
  *              of possible bad options
  *
  * SUBTEST: writeback-pixel-formats
@@ -143,7 +143,7 @@ static bool check_writeback_config(igt_display_t *display, igt_output_t *output,
 
 static igt_output_t *kms_writeback_get_output(igt_display_t *display)
 {
-	int i;
+	igt_output_t *output;
 	igt_crtc_t *crtc;
 
 	drmModeModeInfo override_mode = {
@@ -163,9 +163,7 @@ static igt_output_t *kms_writeback_get_output(igt_display_t *display)
 		.name = {"640x480-60"},
 	};
 
-	for (i = 0; i < display->n_outputs; i++) {
-		igt_output_t *output = &display->outputs[i];
-
+	for_each_output(display, output) {
 		if (output->config.connector->connector_type != DRM_MODE_CONNECTOR_WRITEBACK)
 			continue;
 
@@ -179,9 +177,9 @@ static igt_output_t *kms_writeback_get_output(igt_display_t *display)
 				override_mode = output->config.connector->modes[data.mode_index];
 
 			if (check_writeback_config(display, output, override_mode)) {
-				igt_debug("Using connector %u:%s on pipe %d\n",
+				igt_debug("Using connector %u:%s on pipe %s\n",
 					  output->config.connector->connector_id,
-					  output->name, crtc->pipe);
+					  output->name, igt_crtc_name(crtc));
 				return output;
 			}
 		}
@@ -464,14 +462,18 @@ static void commit_and_dump_fb(igt_display_t *display, igt_output_t *output, igt
 
 static igt_output_t *list_writeback_modes(igt_display_t *display)
 {
-	for (int i = 0; i < display->n_outputs; i++) {
-		igt_output_t *output = &display->outputs[i];
+	igt_output_t *output;
 
+	for_each_output(display, output) {
 		if (output->config.connector->connector_type == DRM_MODE_CONNECTOR_WRITEBACK) {
+			drmModeModeInfo *mode;
+			int j = 0;
+
 			igt_info("\tname  vref hdis hss hse htot vdis vss vse vtot flags type clock\n");
-			for (int j = 0; j < output->config.connector->count_modes; j++) {
-				igt_info("[%d]", j);
-				kmstest_dump_mode(&output->config.connector->modes[j]);
+
+			for_each_connector_mode(output, mode) {
+				igt_info("[%d]", j++);
+				kmstest_dump_mode(mode);
 			}
 			break;
 		}
@@ -620,8 +622,8 @@ int igt_main_args("b:c:f:dl", long_options, help_str, opt_handler, NULL)
 		drmModeFreePropertyBlob(formats_blob);
 	}
 
-	igt_describe("Writeback has a couple of parameters linked together"
-		     "(output framebuffer and fence); this test goes through"
+	igt_describe("Writeback has a couple of parameters linked together "
+		     "(output framebuffer and fence); this test goes through "
 		     "the combination of possible bad options");
 	igt_subtest("writeback-invalid-parameters") {
 		igt_fb_t invalid_output_fb;
@@ -644,7 +646,7 @@ int igt_main_args("b:c:f:dl", long_options, help_str, opt_handler, NULL)
 		igt_fb_t output_fb;
 
 		igt_skip_on(data.dump_check || data.list_modes);
-		igt_skip_on_f(!(data.supported_colors & XRGB8888),"DRM_FORMAT_XRGB8888 is unsupported\n");
+		igt_skip_on_f(!(data.supported_colors & XRGB8888), "DRM_FORMAT_XRGB8888 is unsupported\n");
 		fb_id = igt_create_fb(display.drm_fd, mode.hdisplay, mode.vdisplay,
 				      DRM_FORMAT_XRGB8888,
 				      DRM_FORMAT_MOD_LINEAR,
@@ -678,7 +680,7 @@ int igt_main_args("b:c:f:dl", long_options, help_str, opt_handler, NULL)
 		igt_fb_t output_fb;
 
 		igt_skip_on(data.dump_check || data.list_modes);
-		igt_skip_on_f(!(data.supported_colors & XRGB8888),"DRM_FORMAT_XRGB8888 is unsupported\n");
+		igt_skip_on_f(!(data.supported_colors & XRGB8888), "DRM_FORMAT_XRGB8888 is unsupported\n");
 		fb_id = igt_create_fb(display.drm_fd, mode.hdisplay, mode.vdisplay,
 				      DRM_FORMAT_XRGB8888,
 				      igt_fb_mod_to_tiling(0),

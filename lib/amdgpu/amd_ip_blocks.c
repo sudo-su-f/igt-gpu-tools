@@ -35,9 +35,14 @@ sdma_ring_write_linear(const struct amdgpu_ip_funcs *func,
 
 	i = 0;
 	j = 0;
+
+	/* Guard: write_length must be DWORD-aligned (bytes) */
+	igt_assert_f(ring_context->write_length % 4 == 0,
+		     "SDMA write_linear: write_length %lu not DWORD-aligned\n",
+		     (unsigned long)ring_context->write_length);
 	if (func->family_id == AMDGPU_FAMILY_SI)
 		ring_context->pm4[i++] = SDMA_PACKET_SI(SDMA_OPCODE_WRITE, 0, 0, 0,
-					 ring_context->write_length);
+					 ring_context->write_length / 4);
 	else
 		ring_context->pm4[i++] = SDMA_PACKET(SDMA_OPCODE_WRITE,
 					 SDMA_WRITE_SUB_OPCODE_LINEAR,
@@ -46,14 +51,20 @@ sdma_ring_write_linear(const struct amdgpu_ip_funcs *func,
 	ring_context->pm4[i++] = lower_32_bits(ring_context->bo_mc);
 	ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
 	if (func->family_id >= AMDGPU_FAMILY_AI)
-		ring_context->pm4[i++] = ring_context->write_length - 1;
+		ring_context->pm4[i++] = ring_context->write_length / 4 - 1;
 	else
-		ring_context->pm4[i++] = ring_context->write_length;
+		ring_context->pm4[i++] = ring_context->write_length / 4;
 
-	while (j++ < ring_context->write_length)
+	while (j++ < ring_context->write_length / 4)
 		ring_context->pm4[i++] = func->deadbeaf;
 
 	*pm4_dw = i;
+
+	/* Guard: ensure PM4 packet fits in allocated buffer */
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(*pm4_dw <= ring_context->pm4_size,
+			     "SDMA write_linear: pm4_dw %u exceeds buffer %u\n",
+			     *pm4_dw, ring_context->pm4_size);
 
 	return 0;
 }
@@ -70,9 +81,9 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 	j = 0;
 
 	if (cmd_error == CMD_STREAM_EXEC_INVALID_PACKET_LENGTH)
-		stream_length = ring_context->write_length / 16;
+		stream_length = ring_context->write_length / 4 / 16;
 	else
-		stream_length = ring_context->write_length;
+		stream_length = ring_context->write_length / 4;
 
 	if (cmd_error == CMD_STREAM_EXEC_INVALID_OPCODE)
 		opcode = 0xf2;
@@ -81,7 +92,7 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 
 	if (func->family_id == AMDGPU_FAMILY_SI)
 		ring_context->pm4[i++] = SDMA_PACKET_SI(opcode, 0, 0, 0,
-					 ring_context->write_length);
+					 ring_context->write_length / 4);
 	else
 		ring_context->pm4[i++] = SDMA_PACKET(opcode,
 					 SDMA_WRITE_SUB_OPCODE_LINEAR,
@@ -97,9 +108,9 @@ sdma_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 		ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
 	}
 	if (func->family_id >= AMDGPU_FAMILY_AI)
-		ring_context->pm4[i++] = ring_context->write_length - 1;
+		ring_context->pm4[i++] = ring_context->write_length / 4 - 1;
 	else
-		ring_context->pm4[i++] = ring_context->write_length;
+		ring_context->pm4[i++] = ring_context->write_length / 4;
 
 	while (j++ < stream_length)
 		ring_context->pm4[i++] = func->deadbeaf;
@@ -232,14 +243,28 @@ gfx_ring_write_linear(const struct amdgpu_ip_funcs *func,
 	i = 0;
 	j = 0;
 
-	ring_context->pm4[i++] = PACKET3(PACKET3_WRITE_DATA, 2 +  ring_context->write_length);
+	/* Guard: write_length must be DWORD-aligned (bytes) */
+	igt_assert_f(ring_context->write_length % 4 == 0,
+		     "GFX write_linear: write_length %lu not DWORD-aligned\n",
+		     (unsigned long)ring_context->write_length);
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(ring_context->write_length / 4 + 4 <= ring_context->pm4_size,
+			     "GFX write_linear: %lu DWORDs + 4 header > pm4 buffer %u\n",
+			     (unsigned long)(ring_context->write_length / 4),
+			     ring_context->pm4_size);
+
+	ring_context->pm4[i++] = PACKET3(PACKET3_WRITE_DATA, 2 + ring_context->write_length / 4);
 	ring_context->pm4[i++] = WRITE_DATA_DST_SEL(5) | WR_CONFIRM;
 	ring_context->pm4[i++] = lower_32_bits(ring_context->bo_mc);
 	ring_context->pm4[i++] = upper_32_bits(ring_context->bo_mc);
-	while (j++ < ring_context->write_length)
+	while (j++ < ring_context->write_length / 4)
 		ring_context->pm4[i++] = func->deadbeaf;
 
 	*pm4_dw = i;
+	if (ring_context->pm4_size > 0)
+		igt_assert_f(*pm4_dw <= ring_context->pm4_size,
+			     "GFX write_linear: pm4_dw %u exceeds buffer %u\n",
+			     *pm4_dw, ring_context->pm4_size);
 	return 0;
 }
 
@@ -259,6 +284,8 @@ gfx_ring_bad_write_linear(const struct amdgpu_ip_funcs *func,
 	  */
 	if (cmd_error == CMD_STREAM_EXEC_INVALID_PACKET_LENGTH)
 		stream_length = ring_context->write_length / 16;
+	else if (cmd_error == CMD_STREAM_EXEC_INVALID_PACKET_LENGTH_OVERSIZE)
+		stream_length = ring_context->write_length * 2;
 	else
 		stream_length = ring_context->write_length;
 
@@ -634,6 +661,10 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 	unsigned int nop_count;
 	struct timespec ts;
 	uint64_t current_ns;
+	unsigned int i, j;
+	uint64_t va, value;
+	unsigned num_fences_in_iter;
+	struct amdgpu_userq_params *userq_params;
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	current_ns = (uint64_t)ts.tv_sec * NSEC_PER_SEC + ts.tv_nsec;
@@ -643,7 +674,7 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 		amdgpu_sdma_pkt_begin();
 		/* For SDMA, we need to align the IB to 8 DW boundary */
 		nop_count = (2 - lower_32_bits(*ring_context->wptr_cpu)) & 7;
-		for (unsigned int i = 0; i < nop_count; i++)
+		for (i = 0; i < nop_count; i++)
 			amdgpu_pkt_add_dw(SDMA_PKT_HEADER_OP(SDMA_NOP));
 		amdgpu_pkt_add_dw(SDMA_PKT_HEADER_OP(SDMA_OP_INDIRECT));
 		amdgpu_pkt_add_dw(lower_32_bits(mc_address) & 0xffffffe0); // 32-byte aligned
@@ -659,6 +690,39 @@ user_queue_submit(amdgpu_device_handle device, struct amdgpu_ring_context *ring_
 		amdgpu_sdma_pkt_end();
 	} else {
 		amdgpu_pkt_begin();
+
+		if (ring_context->userq_params) {
+			userq_params = ring_context->userq_params;
+
+			if (userq_params->job_start_write_data_va_addr) {
+				amdgpu_pkt_add_dw(PACKET3(PACKET3_WRITE_DATA, 4));
+				amdgpu_pkt_add_dw(WRITE_DATA_DST_SEL(5) | WR_CONFIRM | WRITE_DATA_CACHE_POLICY(3));
+				va = userq_params->job_start_write_data_va_addr;
+				value = userq_params->job_start_write_data_val;
+				amdgpu_pkt_add_dw(lower_32_bits(va));
+				amdgpu_pkt_add_dw(upper_32_bits(va));
+				amdgpu_pkt_add_dw(lower_32_bits(value));
+				amdgpu_pkt_add_dw(upper_32_bits(value));
+			}
+
+			if (ring_context->userq_params->num_fences) {
+				for (i = 0; i < userq_params->num_fences; i = i + ring_context->max_num_fences_fwm) {
+					num_fences_in_iter = (i + ring_context->max_num_fences_fwm > userq_params->num_fences) ?
+							     userq_params->num_fences - i : ring_context->max_num_fences_fwm;
+					amdgpu_pkt_add_dw(PACKET3(PACKET3_FENCE_WAIT_MULTI, num_fences_in_iter * 4));
+					amdgpu_pkt_add_dw(FWM_ENGINE_SEL(1) | FWM_POLL_INTERVAL(4));
+					for (j = 0; j < num_fences_in_iter; j++) {
+						va = userq_params->fence_info[i + j].va;
+						value = userq_params->fence_info[i + j].value;
+						amdgpu_pkt_add_dw(lower_32_bits(va));
+						amdgpu_pkt_add_dw(upper_32_bits(va));
+						amdgpu_pkt_add_dw(lower_32_bits(value));
+						amdgpu_pkt_add_dw(upper_32_bits(value));
+					}
+				}
+			}
+		}
+
 		/* Prepare the Indirect IB to submit the IB to user queue */
 		amdgpu_pkt_add_dw(PACKET3(PACKET3_INDIRECT_BUFFER, 2));
 		amdgpu_pkt_add_dw(lower_32_bits(mc_address));

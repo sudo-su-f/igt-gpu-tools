@@ -26,13 +26,14 @@
  */
 
 #include <i915_drm.h>
-
+#include <ioctl_wrappers.h>
 #include "intel_reg.h"
 #include "drmtest.h"
 
 #include "gpgpu_fill.h"
 #include "gpgpu_shader.h"
 #include "gpu_cmds.h"
+#include "xe/xe_util.h"
 
 /* lib/i915/shaders/gpgpu/gpgpu_fill.gxa */
 static const uint32_t gen7_gpgpu_kernel[][4] = {
@@ -328,6 +329,79 @@ mov (1|M0)		 r4.14<1>:w	0xF:w					\n\
 send.tgm (16|M0)	null	r4	null	0x0	0x64000007		\n\
 #endif										\n\
 	");
+	gpgpu_shader__eot(kernel);
+	return kernel;
+}
+
+static struct gpgpu_shader *__xe3p_gpgpu_kernel(int xe)
+{
+	struct gpgpu_shader *kernel = gpgpu_shader_create(xe);
+
+	emit_iga64_code(kernel, xe3p_gpgpu_fill, R"(
+#define RX		r0.1
+#define RY		r0.6
+#define COLOR		r1.0
+#define SURFWIDTH	r1.1
+#define SURFHEIGHT	r1.2
+#define WIDTH		r1.3
+#define HEIGHT		r1.4
+#define XPOS		r1.5
+#define YPOS		r1.6
+#define ADDR_BO_LOW	r1.7
+#define ADDR_BO_HIGH	r1.8
+#define OFFSET		r3.0
+#define XOFFSET		r3.1
+#define YOFFSET		r3.2
+#define XEND		r3.3
+#define XCURRENT	r3.4
+#define TMP		r3.7
+#define ADDR_LO		r4.0
+#if GEN_VER >= 3500
+(W)	add (1)		XEND<1>:ud	XPOS:ud		WIDTH:ud
+(W)	mov (1)		OFFSET<1>:ud	0x0:ud
+
+(W)	shl (1)		XOFFSET<1>:ud	RX:ud		0x4:ud
+(W)	add (1)		XOFFSET<1>:ud	XOFFSET:ud	XPOS:ud
+(W)	mov (1)		XCURRENT<1>:ud	XOFFSET:ud
+
+(W)	add (1)		TMP<1>:ud	RY:ud		YPOS:ud
+(W)	mul (1)		YOFFSET<1>:ud	TMP:ud		SURFWIDTH:ud
+(W)	add (1)		OFFSET<1>:ud	XOFFSET:ud	YOFFSET:ud
+
+// Set base address with scalar register
+(W)	add (1)		ADDR_LO<1>:ud	OFFSET:ud	ADDR_BO_LOW:ud
+(W)	mov (1)		s0.0<1>:ud	ADDR_LO:ud
+(W)	mov (1)		s0.1<1>:ud	ADDR_BO_HIGH:ud
+
+// color
+(W)	mov (4)		r20.0<1>:ub		COLOR:ub
+
+// A64 offset
+(W)	mov (8)		r30.0<1>:uq		0x0:uq
+
+//dword: 0
+(W)	cmp (1)		(lt)f0.0 null:ud        XCURRENT:ud	XEND:ud
+(W&f0.0)sendg.ugm (1)	null	r30:1	r20:1	s0.0	0x29404
+//dword: 1
+(W)	add (1)		XCURRENT<1>:ud		XCURRENT:ud	4:ud
+(W)	add (1)		ADDR_LO<1>:ud		ADDR_LO:ud	0x4:ud
+(W)	mov (1)		s0.0<1>:ud		ADDR_LO:ud
+(W)	cmp (1)		(lt)f0.0 null:ud        XCURRENT:ud	XEND:ud
+(W&f0.0)sendg.ugm (1)	null	r30:1	r20:1	s0.0	0x29404
+//dword: 2
+(W)	add (1)		XCURRENT<1>:ud		XCURRENT:ud	4:ud
+(W)	add (1)		ADDR_LO<1>:ud		ADDR_LO:ud	0x4:ud
+(W)	mov (1)		s0.0<1>:ud		ADDR_LO:ud
+(W)	cmp (1)		(lt)f0.0 null:ud        XCURRENT:ud	XEND:ud
+(W&f0.0)sendg.ugm (1)	null	r30:1	r20:1	s0.0	0x29404
+//dword: 3
+(W)	add (1)		XCURRENT<1>:ud		XCURRENT:ud	4:ud
+(W)	add (1)		ADDR_LO<1>:ud		ADDR_LO:ud	0x4:ud
+(W)	mov (1)		s0.0<1>:ud		ADDR_LO:ud
+(W)	cmp (1)		(lt)f0.0 null:ud        XCURRENT:ud	XEND:ud
+(W&f0.0)sendg.ugm (1)	null	r30:1	r20:1	s0.0	0x29404
+#endif
+)");
 
 	gpgpu_shader__eot(kernel);
 	return kernel;
@@ -372,6 +446,47 @@ void xehp_gpgpu_fillfunc(int i915,
 
 	intel_bb_destroy(ibb);
 }
+
+void xe3p_gpgpu_fillfunc(int fd,
+			 struct intel_buf *buf,
+			 unsigned int x, unsigned int y,
+			 unsigned int width, unsigned int height,
+			 uint8_t color)
+{
+	struct intel_bb *ibb;
+	struct gpgpu_shader *kernel;
+	struct xe3p_interface_descriptor_data idd;
+
+	ibb = intel_bb_create(fd, PAGE_SIZE);
+	intel_bb_add_intel_buf(ibb, buf, true);
+
+	intel_bb_ptr_set(ibb, BATCH_STATE_SPLIT);
+
+	kernel = __xe3p_gpgpu_kernel(fd);
+	xe3p_fill_interface_descriptor(ibb, buf, kernel->instr,
+				       kernel->size * 4, &idd);
+	gpgpu_shader_destroy(kernel);
+
+	intel_bb_ptr_set(ibb, 0);
+
+	/* GPGPU pipeline */
+	intel_bb_out(ibb, GEN7_PIPELINE_SELECT | GEN9_PIPELINE_SELECTION_MASK |
+		  PIPELINE_SELECT_GPGPU);
+	xe3p_emit_state_base_address(ibb);
+	xehp_emit_state_compute_mode(ibb, false);
+	xe3p_emit_fill_compute_walk2(ibb, buf->width * buf->bpp / 8, buf->height,
+				     xe_canonical_va(fd, buf->addr.offset),
+				     x, y, width, height, &idd, color);
+
+	intel_bb_out(ibb, MI_BATCH_BUFFER_END);
+	intel_bb_ptr_align(ibb, 32);
+
+	intel_bb_exec(ibb, intel_bb_offset(ibb),
+		      I915_EXEC_RENDER | I915_EXEC_NO_RELOC, true);
+
+	intel_bb_destroy(ibb);
+}
+
 
 void gen9_gpgpu_fillfunc(int i915,
 			 struct intel_buf *buf,

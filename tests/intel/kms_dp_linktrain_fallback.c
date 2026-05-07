@@ -38,11 +38,10 @@ static int traversed_mst_output_count;
 typedef struct {
 	int drm_fd;
 	igt_display_t display;
-	drmModeModeInfo *mode;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	struct igt_fb fb;
-	struct igt_plane *primary;
+	igt_plane_t *primary;
 	int n_pipes;
 } data_t;
 
@@ -96,7 +95,7 @@ static void setup_pipe_on_outputs(data_t *data,
 		      data->n_pipes, *output_count);
 
 	for_each_crtc(&data->display, crtc) {
-		data->pipe = crtc->pipe;
+		data->crtc = crtc;
 		if (i >= *output_count)
 			break;
 		/*
@@ -116,7 +115,7 @@ static void setup_modeset_on_outputs(data_t *data,
 				     int *output_count,
 				     drmModeModeInfo *mode[],
 				     struct igt_fb fb[],
-				     struct igt_plane *primary[])
+				     igt_plane_t *primary[])
 {
 	int i;
 
@@ -160,7 +159,7 @@ static bool validate_modeset_for_outputs(data_t *data,
 					int *output_count,
 					drmModeModeInfo *mode[],
 					struct igt_fb fb[],
-					struct igt_plane *primary[])
+					igt_plane_t *primary[])
 {
 	igt_require_f(*output_count > 0, "Require at least 1 output\n");
 	setup_pipe_on_outputs(data, outputs, output_count);
@@ -174,7 +173,7 @@ static bool validate_modeset_for_outputs(data_t *data,
 static bool setup_outputs(data_t *data, bool is_mst,
 		      igt_output_t *outputs[],
 		      int *output_count, drmModeModeInfo *mode[],
-		      struct igt_fb fb[], struct igt_plane *primary[])
+		      struct igt_fb fb[], igt_plane_t *primary[])
 {
 	bool ret;
 
@@ -308,7 +307,7 @@ static bool fix_link_status_and_recommit(data_t *data,
 					 int *output_count,
 					 drmModeModeInfo * modes[],
 					 struct igt_fb fbs[],
-					 struct igt_plane *primaries[])
+					 igt_plane_t *primaries[])
 {
 	int i;
 	igt_output_t *out;
@@ -348,7 +347,7 @@ static void test_fallback(data_t *data, bool is_mst)
 	igt_output_t *outputs[IGT_MAX_PIPES];
 	drmModeModeInfo * modes[IGT_MAX_PIPES];
 	struct igt_fb fbs[IGT_MAX_PIPES];
-	struct igt_plane *primaries[IGT_MAX_PIPES];
+	igt_plane_t *primaries[IGT_MAX_PIPES];
 	struct udev_monitor *mon;
 
 	retries = SPURIOUS_HPD_RETRY;
@@ -459,32 +458,31 @@ static bool run_lt_fallback_test(data_t *data)
 
 static void test_dsc_sst_fallback(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	bool non_dsc_mode_found = false;
 	bool dsc_fallback_successful = false;
 	int ret;
 	struct udev_monitor *mon;
 	drmModeModeInfo *mode_to_check;
+	drmModeModeInfo *mode;
 	igt_output_t *outputs[IGT_MAX_PIPES];
 	int output_count = 0;
 
 	igt_info("Checking DSC fallback on %s\n", igt_output_name(data->output));
-	data->pipe = PIPE_A;
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(&data->display);
 	igt_reset_link_params(data->drm_fd, data->output);
 	igt_force_link_retrain(data->drm_fd, data->output, RETRAIN_COUNT);
 
 	/* Find a mode that doesn't require DSC initially */
-	for_each_connector_mode(data->output) {
-		data->mode = &data->output->config.connector->modes[j__];
-		igt_create_color_fb(data->drm_fd, data->mode->hdisplay,
-				    data->mode->vdisplay, DRM_FORMAT_XRGB8888,
+	for_each_connector_mode(data->output, mode) {
+		igt_create_color_fb(data->drm_fd, mode->hdisplay,
+				    mode->vdisplay, DRM_FORMAT_XRGB8888,
 				    DRM_FORMAT_MOD_LINEAR, 0.0, 1.0, 0.0,
 				    &data->fb);
-		igt_output_override_mode(data->output, data->mode);
+		igt_output_override_mode(data->output, mode);
 		igt_output_set_crtc(data->output,
-				    igt_crtc_for_pipe(display, data->pipe));
+				    data->crtc);
 		data->primary = igt_output_get_plane_type(data->output,
 						DRM_PLANE_TYPE_PRIMARY);
 		igt_plane_set_fb(data->primary, &data->fb);
@@ -495,8 +493,8 @@ static void test_dsc_sst_fallback(data_t *data)
 						    NULL);
 		if (ret != 0) {
 			igt_debug("Skipping mode %dx%d@%d on %s\n",
-				 data->mode->hdisplay, data->mode->vdisplay,
-				 data->mode->vrefresh,
+				 mode->hdisplay, mode->vdisplay,
+				 mode->vrefresh,
 				 igt_output_name(data->output));
 			continue;
 		}
@@ -616,7 +614,7 @@ int igt_main()
 		igt_display_require(&data.display, data.drm_fd);
 		igt_display_require_output(&data.display);
 		for_each_crtc(&data.display, crtc) {
-			data.pipe = crtc->pipe;
+			data.crtc = crtc;
 			data.n_pipes++;
 		}
 		igt_install_exit_handler(igt_drm_debug_mask_reset_exit_handler);

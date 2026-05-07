@@ -263,24 +263,25 @@
 #define RUN_TEST		1
 #define RUN_PAIR		2
 
+#define PAIR_LIMIT 		3
+#define CONN_LIMIT 		3
+
 #ifndef DRM_CAP_TIMESTAMP_MONOTONIC
 #define DRM_CAP_TIMESTAMP_MONOTONIC 6
 #endif
 
 static bool all_crtcs = false;
+static bool all_conns = false;
+static bool all_pairs = false;
 
-drmModeRes *resources;
-int drm_fd;
+static drmModeRes *resources;
+static int drm_fd;
 static struct buf_ops *bops;
-uint32_t devid;
-int test_time = 3;
 static bool monotonic_timestamp;
 static pthread_t vblank_wait_thread;
 static int max_dotclock;
 
 static drmModeConnector *last_connector;
-
-uint32_t *fb_ptr;
 
 static igt_display_t display;
 
@@ -861,8 +862,12 @@ static int set_mode(struct test_output *o, uint32_t fb, int x, int y)
 		if (ret)
 			return ret;
 
-		if (is_intel_device(drm_fd))
-			intel_drrs_disable(drm_fd, o->crtc_index);
+		if (is_intel_device(drm_fd)) {
+			igt_crtc_t *crtc = igt_crtc_for_crtc_index(&display, o->crtc_index);
+
+			if (crtc)
+				intel_drrs_disable(crtc);
+		}
 	}
 
 	return 0;
@@ -1320,7 +1325,14 @@ static bool event_loop(struct test_output *o, unsigned duration_ms,
 		       unsigned *elapsed)
 {
 	unsigned long start, end;
+	uint32_t devid;
 	int count = 0;
+	bool wa = false;
+
+	if (is_intel_device(drm_fd)) {
+		devid = intel_get_drm_devid(drm_fd);
+		wa = IS_SANDYBRIDGE(devid) || IS_BATTLEMAGE(devid);
+	}
 
 	start = gettime_us();
 
@@ -1339,6 +1351,9 @@ static bool event_loop(struct test_output *o, unsigned duration_ms,
 		update_all_state(o, completed_events);
 
 		if (count && (gettime_us() - start) / 1000 >= duration_ms)
+			break;
+
+		if (count && wa && o->flags & TEST_SUSPEND)
 			break;
 
 		count++;
@@ -1819,6 +1834,7 @@ static void run_test(int duration, int flags)
 {
 	struct test_output o;
 	int i, n, modes = 0;
+	int conn_count = 0;
 
 	/* No tiling support in XE. */
 	if (is_xe_device(drm_fd) && flags & TEST_FENCE_STRESS)
@@ -1842,6 +1858,10 @@ static void run_test(int duration, int flags)
 			/* Limit the execution to 2 CRTCs (first & last) for hang tests */
 			if ((flags & TEST_HANG) && !all_crtcs &&
 			    n != 0 && n != (resources->count_crtcs - 1))
+				continue;
+
+			/* Limit the execution to 1 CRTC (first) for suspend tests */
+			if ((flags & TEST_SUSPEND) && !all_crtcs && n != 0)
 				continue;
 
 			memset(&o, 0, sizeof(o));
@@ -1876,6 +1896,14 @@ static void run_test(int duration, int flags)
 			    n != 0 && n != (resources->count_crtcs - 1))
 				continue;
 
+			/* Limit the execution to 1 CRTC (first) for suspend tests */
+			if ((flags & TEST_SUSPEND) && !all_crtcs && n != 0)
+				continue;
+
+			/* Limit number of displays run */
+			if ((flags & TEST_SUSPEND) && !all_conns && conn_count >= CONN_LIMIT)
+				continue;
+
 			memset(&o, 0, sizeof(o));
 			o.count = 1;
 			o._connector[0] = resources->connectors[i];
@@ -1884,8 +1912,15 @@ static void run_test(int duration, int flags)
 			o.depth = 24;
 
 			crtc_idx = n;
-			run_test_on_crtc_set(&o, &crtc_idx, RUN_TEST,
-					     resources->count_crtcs, duration);
+
+			connector_find_preferred_mode(o._connector[0], n, &o);
+			if (o.mode_valid) {
+				run_test_on_crtc_set(&o, &crtc_idx, RUN_TEST,
+						     resources->count_crtcs, duration);
+				conn_count++;
+			} else {
+				free_test_output(&o);
+			}
 		}
 	}
 
@@ -1896,6 +1931,7 @@ static void run_pair(int duration, int flags)
 {
 	struct test_output o;
 	int i, j, m, n, modes = 0;
+	int pair_count = 0;
 
 	/* No tiling support in XE. */
 	if (is_xe_device(drm_fd) && flags & TEST_FENCE_STRESS)
@@ -1918,6 +1954,12 @@ static void run_pair(int duration, int flags)
 		for (n = 0; n < resources->count_crtcs; n++) {
 			for (j = i + 1; j < resources->count_connectors; j++) {
 				for (m = n + 1; m < resources->count_crtcs; m++) {
+					/* Limit the execution to 2 CRTCs (first & last) for hang and suspend tests */
+					if (((flags & TEST_HANG) || (flags & TEST_SUSPEND)) && !all_crtcs &&
+					    ((n != 0 && n != resources->count_crtcs) ||
+					    m != resources->count_crtcs - 1))
+						continue;
+
 					memset(&o, 0, sizeof(o));
 					o.count = 2;
 					o._connector[0] = resources->connectors[i];
@@ -1952,6 +1994,16 @@ static void run_pair(int duration, int flags)
 				for (m = n + 1; m < resources->count_crtcs; m++) {
 					int crtc_idxs[2];
 
+					/* Limit the execution to 2 CRTCs (first & last) for hang and suspend tests */
+					if (((flags & TEST_HANG) || (flags & TEST_SUSPEND)) && !all_crtcs &&
+					    ((n != 0 && n != resources->count_crtcs) ||
+					    m != resources->count_crtcs - 1))
+						continue;
+
+					/* Limit number of suspend tests */
+					if ((flags & TEST_SUSPEND) && !all_pairs && pair_count >= PAIR_LIMIT)
+						continue;
+
 					memset(&o, 0, sizeof(o));
 					o.count = 2;
 					o._connector[0] = resources->connectors[i];
@@ -1963,16 +2015,18 @@ static void run_pair(int duration, int flags)
 					crtc_idxs[0] = n;
 					crtc_idxs[1] = m;
 
-					/* Limit the execution to 2 CRTCs (first & last) for hang tests */
-					if ((flags & TEST_HANG) && !all_crtcs &&
-					    ((n != 0 && n != resources->count_crtcs) ||
-					    m != resources->count_crtcs - 1))
+					connector_find_compatible_mode(n, m, &o);
+
+					if (!o.mode_valid) {
+						free_test_output(&o);
 						continue;
+					}
 
 					run_test_on_crtc_set(&o, crtc_idxs,
 							     RUN_PAIR,
 							     resources->count_crtcs,
 							     duration);
+					pair_count++;
 				}
 			}
 		}
@@ -2027,8 +2081,14 @@ static void test_nonblocking_read(int in)
 static int opt_handler(int opt, int opt_index, void *data)
 {
 	switch (opt) {
+		case 'c':
+			all_conns = true;
+			break;
 		case 'e':
 			all_crtcs = true;
+			break;
+		case 'p':
+			all_pairs = true;
 			break;
 		default:
 			return IGT_OPT_HANDLER_ERROR;
@@ -2038,9 +2098,11 @@ static int opt_handler(int opt, int opt_index, void *data)
 }
 
 const char *help_str =
-	"  -e \tRun on all CRTCs. (By default subtests will run on two CRTCs)\n";
+	"  -c \tRun on all connectors. (By default suspend subtests will run on 3 connectors)\n"
+	"  -e \tRun on all CRTCs. (By default subtests will run on two CRTCs)\n"
+	"  -p \tRun on all output pairs. (By default 2x-* suspend subtests will run on 3 pairs)\n";
 
-int igt_main_args("e", NULL, help_str, opt_handler, NULL)
+int igt_main_args("cep", NULL, help_str, opt_handler, NULL)
 {
 	struct {
 		int duration;
@@ -2094,6 +2156,8 @@ int igt_main_args("e", NULL, help_str, opt_handler, NULL)
 		drm_fd = drm_open_driver_master(DRIVER_ANY);
 
 		igt_display_require(&display, drm_fd);
+
+		igt_skip_on(is_mtk_device(drm_fd));
 
 		kmstest_set_vt_graphics_mode();
 		igt_install_exit_handler(kms_flip_exit_handler);

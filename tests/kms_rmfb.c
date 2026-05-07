@@ -74,11 +74,11 @@ struct rmfb_data {
  * so test this and make sure it works.
  */
 static void
-test_rmfb(struct rmfb_data *data, igt_output_t *output, enum pipe pipe, bool reopen)
+test_rmfb(struct rmfb_data *data, igt_output_t *output, igt_crtc_t *crtc,
+	  bool reopen)
 {
 	struct igt_fb fb, argb_fb;
 	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe);
 	drmModeModeInfo *mode;
 	igt_plane_t *plane;
 	drmModeCrtc *drm_crtc;
@@ -104,7 +104,8 @@ test_rmfb(struct rmfb_data *data, igt_output_t *output, enum pipe pipe, bool reo
 	 * because most of the modeset operations must be fast
 	 * later on.
 	 */
-	for_each_plane_on_pipe(&data->display, crtc->pipe, plane) {
+	for_each_plane_on_crtc(crtc,
+			       plane) {
 		if (plane->type == DRM_PLANE_TYPE_CURSOR) {
 			igt_plane_set_fb(plane, &argb_fb);
 			igt_fb_set_size(&argb_fb, plane, cursor_width, cursor_height);
@@ -161,7 +162,8 @@ test_rmfb(struct rmfb_data *data, igt_output_t *output, enum pipe pipe, bool reo
 
 	drmModeFreeCrtc(drm_crtc);
 
-	for_each_plane_on_pipe(&data->display, crtc->pipe, plane) {
+	for_each_plane_on_crtc(crtc,
+			       plane) {
 		drmModePlanePtr planeres = drmModeGetPlane(data->drm_fd, plane->drm_plane->plane_id);
 
 		igt_assert_eq(planeres->fb_id, 0);
@@ -189,7 +191,9 @@ run_rmfb_test(struct rmfb_data *data, bool reopen)
 
 		igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
 			      igt_output_name(output))
-			test_rmfb(data, output, crtc->pipe, reopen);
+			test_rmfb(data, output,
+				  crtc,
+				  reopen);
 	}
 }
 

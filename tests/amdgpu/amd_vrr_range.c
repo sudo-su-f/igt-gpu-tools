@@ -28,7 +28,7 @@
 
 IGT_TEST_DESCRIPTION("Test EDID parsing and debugfs reporting on Freesync displays");
 
-/* Maximumm pipes on any AMD ASIC. */
+/* Maximum pipes on any AMD ASIC. */
 #define MAX_PIPES 6
 #define EDID_SIZE 256
 #define EDID_PATH "/sys/class/drm/card%d-%s/edid"
@@ -189,9 +189,9 @@ static void test_init(data_t *data)
 	igt_crtc_t *crtc;
 
 	for_each_crtc(display, crtc) {
-		igt_output_t *output = &display->outputs[crtc->pipe];
+		igt_output_t *output = &display->outputs[crtc->crtc_index];
 
-		data->output[crtc->pipe] = output;
+		data->output[crtc->crtc_index] = output;
 	}
 
 	igt_display_reset(display);
@@ -249,7 +249,7 @@ static void trigger_edid_parse(data_t *data, igt_output_t *output, uint32_t test
 	else
 		igt_amd_trigger_hotplug(data->fd, output->name);
 
-	/* more safe margin until resume and hotplug is completed */
+	/* more safety margin until resume and hotplug is completed */
 	usleep(1500000);
 }
 
@@ -260,7 +260,7 @@ static bool has_vrr(igt_output_t *output)
 	       igt_output_get_prop(output, IGT_CONNECTOR_VRR_CAPABLE);
 }
 
-static void parse_vrr_gange_from_edid(data_t *data, uint8_t *edid, int index)
+static void parse_vrr_range_from_edid(data_t *data, uint8_t *edid, int index)
 {
 	bool max_rate_offset = false;
 	bool min_rate_offset = false;
@@ -314,7 +314,7 @@ static bool find_vrr_range_from_edid(data_t *data, igt_output_t *output)
 				break;
 			else if (i == range_head_size-1) {
 				/* Found Display Range Limits Descriptor block */
-				parse_vrr_gange_from_edid(data, sink_edid, index);
+				parse_vrr_range_from_edid(data, sink_edid, index);
 				return true;
 			}
 		}
@@ -325,7 +325,7 @@ static bool find_vrr_range_from_edid(data_t *data, igt_output_t *output)
 }
 
 /* Check if EDID parsing is correctly reporting Freesync capability
- * by overriding EDID with ones from golden sample.
+ * by overriding EDID with ones from a golden sample.
  */
 static void test_freesync_parsing_base(data_t *data, uint32_t test_flags)
 {
@@ -354,7 +354,7 @@ static void test_freesync_parsing_base(data_t *data, uint32_t test_flags)
 			trigger_edid_parse(data, output, test_flags);
 
 			igt_assert_f(find_vrr_range_from_edid(data, output),
-				"Cannot parsing VRR range from EDID\n");
+				"Cannot parse VRR range from EDID\n");
 
 			expected_range.min = data->expected_range.min;
 			expected_range.max = data->expected_range.max;

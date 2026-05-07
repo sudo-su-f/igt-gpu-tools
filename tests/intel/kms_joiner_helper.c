@@ -105,7 +105,7 @@ void igt_set_all_master_pipes_for_platform(igt_display_t *display, uint32_t *mas
 
 	*master_pipes = 0;
 	for (pipe = PIPE_A; pipe < IGT_MAX_PIPES - 1; pipe++) {
-		if (igt_crtc_for_pipe(display, pipe)->valid && igt_crtc_for_pipe(display, pipe + 1)->valid) {
+		if (igt_crtc_for_pipe(display, pipe) && igt_crtc_for_pipe(display, pipe + 1)) {
 			*master_pipes |= BIT(pipe);
 			igt_info("Found master pipe %s\n", kmstest_pipe_name(pipe));
 		}
@@ -141,6 +141,8 @@ bool igt_assign_pipes_for_outputs(int drm_fd,
 	igt_output_t *out;
 
 	for (idx = 0; idx < num_outputs; idx++) {
+		igt_crtc_t *crtc;
+
 		out = outputs[idx];
 		needed = get_required_pipes(drm_fd, out);
 		if (needed < 0)
@@ -160,6 +162,9 @@ bool igt_assign_pipes_for_outputs(int drm_fd,
 				needed, kmstest_pipe_name(start),
 				kmstest_pipe_name(start + needed - 1), out->name);
 
+		crtc = igt_crtc_for_pipe(out->display, start);
+		igt_assert_f(crtc, "There is no pipe %s\n", kmstest_pipe_name(start));
+
 		if (needed > 1) {
 			mp = get_next_master_pipe(BIT(start));
 
@@ -168,13 +173,10 @@ bool igt_assign_pipes_for_outputs(int drm_fd,
 						out->name);
 				return false;
 			}
-			igt_output_set_crtc(out,
-					    igt_crtc_for_pipe(out->display, start));
-			igt_debug("Using pipe %s as master.\n",
-					kmstest_pipe_name(start));
-		} else
-			igt_output_set_crtc(out,
-					    igt_crtc_for_pipe(out->display, start));
+			igt_debug("Using pipe %s as master.\n", igt_crtc_name(crtc));
+		}
+
+		igt_output_set_crtc(out, crtc);
 
 		for (i = 0; i < needed; i++)
 			*used_pipes_mask |= BIT(start + i);

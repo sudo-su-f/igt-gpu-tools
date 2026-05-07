@@ -1,0 +1,14 @@
+#####################################################
+#
+# VMM Flows fast-feedback test list:
+# defines tests to be executed pre-/post-merge BATs.
+#
+# This is allow list, needs to be extended if new
+# tests need to be added to scope.
+#
+#####################################################
+######################
+# Basic VF/VM create
+######################
+test_basic.py::TestVmSetup
+test_basic.py::TestVmWorkload

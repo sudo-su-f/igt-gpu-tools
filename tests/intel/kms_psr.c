@@ -691,7 +691,7 @@ static void setup_test_plane(data_t *data, int test_plane)
 	igt_display_commit(&data->display);
 }
 
-static enum pipe get_pipe_for_output(igt_display_t *display,
+static igt_crtc_t * get_pipe_for_output(igt_display_t *display,
 				     igt_output_t *output)
 {
 	igt_crtc_t *crtc;
@@ -705,7 +705,7 @@ static enum pipe get_pipe_for_output(igt_display_t *display,
 			continue;
 		}
 
-		return crtc->pipe;
+		return crtc;
 	}
 
 	igt_assert_f(false, "No pipe found for output %s\n",
@@ -714,7 +714,7 @@ static enum pipe get_pipe_for_output(igt_display_t *display,
 
 static void test_setup(data_t *data)
 {
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	drmModeConnectorPtr connector;
 	bool psr_entered = false;
 
@@ -729,7 +729,7 @@ static void test_setup(data_t *data)
 		igt_require_f(data->fbc_flag,
 			      "Can't test FBC with PSR\n");
 
-	pipe = get_pipe_for_output(&data->display, data->output);
+	crtc = get_pipe_for_output(&data->display, data->output);
 	data->crtc_id = data->output->config.crtc->crtc_id;
 	connector = data->output->config.connector;
 
@@ -749,9 +749,8 @@ static void test_setup(data_t *data)
 		setup_test_plane(data, data->test_plane_id);
 		if (psr_wait_entry_if_enabled(data)) {
 			if (data->fbc_flag == true && data->op_fbc_mode == FBC_ENABLED)
-				igt_assert_f(intel_fbc_wait_until_enabled(data->drm_fd,
-									  pipe),
-									  "FBC still disabled\n");
+				igt_assert_f(intel_fbc_wait_until_enabled(crtc),
+					     "FBC still disabled\n");
 			psr_entered = true;
 			break;
 		}
@@ -774,7 +773,6 @@ int igt_main()
 {
 	int z, y;
 	enum operations op;
-	enum pipe pipe;
 	const char *append_subtest_name[3] = {
 		"psr-",
 		"psr2-",
@@ -787,10 +785,11 @@ int igt_main()
 	int modes[] = {PSR_MODE_1, PSR_MODE_2, PR_MODE};
 	int fbc_status[] = {FBC_DISABLED, FBC_ENABLED};
 	igt_output_t *output;
-	bool fbc_chipset_support;
-	int disp_ver;
+	bool fbc_chipset_support = false;
 
 	igt_fixture() {
+		igt_crtc_t *crtc;
+
 		data.drm_fd = drm_open_driver_master(DRIVER_INTEL | DRIVER_XE);
 		data.debugfs_fd = igt_debugfs_dir(data.drm_fd);
 		kmstest_set_vt_graphics_mode();
@@ -798,8 +797,11 @@ int igt_main()
 		data.bops = buf_ops_create(data.drm_fd);
 		igt_display_require(&data.display, data.drm_fd);
 		igt_require_f(output_supports_psr(&data), "Sink does not support PSR/PSR2/PR\n");
-		disp_ver = intel_display_ver(data.devid);
-		fbc_chipset_support = intel_fbc_supported_on_chipset(data.drm_fd, pipe);
+
+		for_each_crtc(&data.display, crtc) {
+			if (intel_fbc_supported(crtc))
+				fbc_chipset_support = true;
+		}
 	}
 
 	for (y = 0; y < ARRAY_SIZE(fbc_status); y++) {
@@ -807,7 +809,7 @@ int igt_main()
 		for (z = 0; z < ARRAY_SIZE(modes); z++) {
 			data.op_psr_mode = modes[z];
 			data.fbc_flag = fbc_chipset_support &&
-					intel_fbc_supported_for_psr_mode(disp_ver,
+					intel_fbc_supported_for_psr_mode(&data.display,
 									 data.op_psr_mode);
 
 			igt_describe("Basic check for psr if it is detecting changes made "

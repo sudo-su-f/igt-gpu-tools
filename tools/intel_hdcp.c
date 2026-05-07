@@ -28,7 +28,7 @@ typedef struct data {
 	struct igt_fb fb;
 	int height, width;
 	igt_output_t *output;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	enum hdcp_type hdcp_type;
 	int user_cmd;
 	bool running;
@@ -102,24 +102,13 @@ static void draw_menu_text(cairo_t *cr, data_t *data)
 	}
 }
 
-static void draw_menu(data_t *data, const char *status)
+static void draw_menu(data_t *data)
 {
 	cairo_t *cr = igt_get_cairo_ctx(data->fd, &data->fb);
 
-	/* Background color and text color based on HDCP status */
-	if (strcmp(status, "INIT") == 0) {
-		cairo_set_source_rgb(cr, 0.051, 0.278, 0.631);
-		cairo_paint(cr);
-		cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-	} else if (strcmp(status, "Enabled") == 0) {
-		cairo_set_source_rgb(cr, 0.0, 1.0, 0.0);
-		cairo_paint(cr);
-		cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-	} else {
-		cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
-		cairo_paint(cr);
-		cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
-	}
+	cairo_set_source_rgb(cr, 0.051, 0.278, 0.631);
+	cairo_paint(cr);
+	cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
 
 	draw_menu_text(cr, data);
 
@@ -468,15 +457,27 @@ static void *keypress_thread(void *arg)
 	return NULL;
 }
 
+static double draw_text_right(cairo_t *cr, double font_size, double x, double y, const char *str)
+{
+	cairo_text_extents_t ext;
+
+	cairo_set_font_size(cr, font_size);
+	cairo_text_extents(cr, str, &ext);
+	cairo_move_to(cr, x - ext.width, y);
+	cairo_show_text(cr, str);
+
+	return y - ext.height - (font_size / 4);
+}
+
 static void *video_player_thread(void *arg)
 {
-	double font_size, x, y;
+	double font_size, x, y, edge_gap;
 	struct igt_fb fb;
 	cairo_t *cr;
 	igt_plane_t *primary;
-	const char *hdcp_str;
+	const char *hdcp_request;
+	const char *hdcp_status;
 	double bg_r = 0.0, bg_g = 0.0, bg_b = 0.0;
-	cairo_text_extents_t ext;
 	enum hdcp_type cur_type, prev_type;
 	data_t *data;
 	char timer_str[32];
@@ -502,22 +503,24 @@ static void *video_player_thread(void *arg)
 			prev_type = cur_type;
 		}
 
+		hdcp_status = get_hdcp_status(data, data->selected_connector);
+
 		switch (cur_type) {
 		case HDCP_TYPE_1_4:
 			bg_r = 0.0; bg_g = 0.7; bg_b = 0.0;
-			hdcp_str = "HDCP1.4";
+			hdcp_request = "HDCP1.4";
 			break;
 		case HDCP_TYPE_2_2_TYPE_0:
 			bg_r = 0.0; bg_g = 0.45; bg_b = 0.45;
-			hdcp_str = "HDCP2.2 TYPE 0";
+			hdcp_request = "HDCP2.2 TYPE 0";
 			break;
 		case HDCP_TYPE_2_2_TYPE_1:
 			bg_r = 0.45; bg_g = 0.15; bg_b = 0.6;
-			hdcp_str = "HDCP2.2 TYPE 1";
+			hdcp_request = "HDCP2.2 TYPE 1";
 			break;
 		default:
 			bg_r = 0.0; bg_g = 0.0; bg_b = 0.0;
-			hdcp_str = "NO HDCP";
+			hdcp_request = "NO HDCP";
 			break;
 		}
 
@@ -528,29 +531,13 @@ static void *video_player_thread(void *arg)
 
 		draw_menu_text(cr, data);
 
-		current_time = time(NULL);
-		elapsed = current_time - data->video_start_time;
-		minutes = elapsed / 60;
-		seconds = elapsed % 60;
-		snprintf(timer_str, sizeof(timer_str), "%02d:%02d", minutes, seconds);
-
 		cairo_select_font_face(cr, "Helvetica", CAIRO_FONT_SLANT_NORMAL,
 				       CAIRO_FONT_WEIGHT_BOLD);
 		cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
 		font_size = data->height / 12.0;
-		cairo_set_font_size(cr, font_size / 2.0);
-		cairo_text_extents(cr, timer_str, &ext);
-		cairo_move_to(cr, data->width - ext.width - 20, data->height - 20);
-		cairo_show_text(cr, timer_str);
-
-		/* Draw HDCP status above timer */
-		cairo_set_font_size(cr, font_size);
-		cairo_text_extents(cr, hdcp_str, &ext);
-		x = data->width - ext.width - 20;
-		y = data->height - ext.height - 60;
-
-		cairo_move_to(cr, x, y);
-		cairo_show_text(cr, hdcp_str);
+		edge_gap = font_size / 5;
+		x = data->width - edge_gap;
+		y = data->height - edge_gap;
 
 		/* Add timer in bottom-right corner */
 		current_time = time(NULL);
@@ -558,11 +545,13 @@ static void *video_player_thread(void *arg)
 		minutes = elapsed / 60;
 		seconds = elapsed % 60;
 		snprintf(timer_str, sizeof(timer_str), "%02d:%02d", minutes, seconds);
+		y = draw_text_right(cr, font_size / 2.0, x, y, timer_str);
 
-		cairo_set_font_size(cr, font_size / 2.0);
-		cairo_text_extents(cr, timer_str, &ext);
-		cairo_move_to(cr, data->width - ext.width - 20, data->height - 20);
-		cairo_show_text(cr, timer_str);
+		/* Draw HDCP status above timer */
+		y = draw_text_right(cr, font_size, x, y, hdcp_status);
+
+		/* Draw HDCP request above status */
+		y = draw_text_right(cr, font_size, x, y, hdcp_request);
 
 		cairo_destroy(cr);
 
@@ -605,8 +594,8 @@ static void stop_video_player(data_t *data)
 
 static void enable_hdcp_type(data_t *data, enum hdcp_type type)
 {
-		set_hdcp_prop(data, CP_DESIRED, type, data->selected_connector);
 		pthread_mutex_lock(&data->lock);
+		set_hdcp_prop(data, CP_DESIRED, type, data->selected_connector);
 		data->hdcp_type = type;
 		data->video_start_time = time(NULL);
 		pthread_mutex_unlock(&data->lock);
@@ -628,7 +617,7 @@ static void test_init(data_t *data)
 	igt_display_reset(&data->display);
 
 	for_each_crtc_with_valid_output(&data->display, crtc, data->output) {
-		data->pipe = crtc->pipe;
+		data->crtc = crtc;
 		if (!igt_output_has_prop(data->output, IGT_CONNECTOR_CONTENT_PROTECTION))
 			continue;
 
@@ -667,13 +656,12 @@ int main(int argc, char **argv)
 {
 	data_t data;
 	pthread_t tid;
-	const char *status = NULL;
 	igt_plane_t *primary;
 
 	data.selected_connector = -1;
 	test_init(&data);
 
-	draw_menu(&data, "INIT");
+	draw_menu(&data);
 	primary = igt_output_get_plane_type(data.output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, &data.fb);
 	igt_display_commit2(&data.display, COMMIT_ATOMIC);
@@ -707,7 +695,6 @@ int main(int argc, char **argv)
 			enable_hdcp_type(&data, HDCP_TYPE_2_2_TYPE_1);
 			break;
 		case 5:
-			stop_video_player(&data);
 			set_hdcp_prop(&data, CP_UNDESIRED, HDCP_TYPE_2_2_TYPE_1,
 				      data.selected_connector);
 			data.hdcp_type = HDCP_TYPE_NONE;
@@ -715,17 +702,6 @@ int main(int argc, char **argv)
 		default:
 			break;
 		}
-
-		if (cmd == 1) {
-			draw_menu(&data, "INIT");
-		} else {
-			status = get_hdcp_status(&data, data.selected_connector);
-			draw_menu(&data, status);
-		}
-
-		primary = igt_output_get_plane_type(data.output, DRM_PLANE_TYPE_PRIMARY);
-		igt_plane_set_fb(primary, &data.fb);
-		igt_display_commit2(&data.display, COMMIT_ATOMIC);
 
 		usleep(200 * 1000);
 	}

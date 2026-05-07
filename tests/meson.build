@@ -36,6 +36,7 @@ test_progs = [
 	'kms_dither',
 	'kms_display_modes',
 	'kms_dp_aux_dev',
+	'kms_explicit_fence',
 	'kms_feature_discovery',
 	'kms_flip',
 	'kms_flip_event_leak',
@@ -313,17 +314,21 @@ intel_xe_progs = [
 	'xe_huc_copy',
 	'xe_intel_bb',
 	'xe_live_ktest',
+	'xe_madvise',
 	'xe_media_fill',
 	'xe_mmap',
         'xe_module_load',
         'xe_multigpu_svm',
 	'xe_noexec_ping_pong',
+        'xe_non_msix',
 	'xe_oa',
+	'xe_page_reclaim',
 	'xe_pat',
 	'xe_peer2peer',
 	'xe_pm',
 	'xe_pm_residency',
 	'xe_pmu',
+	'xe_prefetch_fault',
 	'xe_prime_self_import',
 	'xe_pxp',
 	'xe_query',
@@ -334,6 +339,7 @@ intel_xe_progs = [
 	'xe_sriov_admin',
 	'xe_sriov_auto_provisioning',
 	'xe_sriov_flr',
+	'xe_sriov_vfio',
 	'xe_sriov_scheduling',
         'xe_survivability',
 	'xe_sriov_vram',
@@ -353,6 +359,7 @@ intel_xe_eudebug_progs = [
 ]
 
 if build_xe_eudebug
+	build_info += 'Xe EUdebug **experimental** tests enabled.'
 	intel_xe_progs += intel_xe_eudebug_progs
 endif
 
@@ -449,7 +456,6 @@ endforeach
 intel_progs = intel_i915_xe_progs
 intel_progs += intel_i915_progs + intel_kms_progs
 if build_xe
-	build_info += 'Xe **experimental** tests enabled.'
 	intel_progs += intel_xe_progs
 endif
 

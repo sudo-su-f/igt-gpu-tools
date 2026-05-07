@@ -10,8 +10,20 @@
 #include "lib/amdgpu/amd_sdma.h"
 #include "lib/amdgpu/amd_PM4.h"
 #include "lib/amdgpu/amd_command_submission.h"
+#include "lib/amdgpu/amdgpu_asic_addr.h"
+
 #include "ioctl_wrappers.h"
 
+static const char *
+amdgpu_ip_type_name(unsigned ip_type)
+{
+	switch (ip_type) {
+	case AMDGPU_HW_IP_GFX:     return "GFX";
+	case AMDGPU_HW_IP_COMPUTE: return "Compute";
+	case AMDGPU_HW_IP_DMA:     return "SDMA";
+	default:                    return "Unknown";
+	}
+}
 
 /*
  *
@@ -50,7 +62,7 @@ int amdgpu_test_exec_cs_helper(amdgpu_device_handle device, unsigned int ip_type
 		/* prepare CS */
 		igt_assert(ring_context->pm4_dw <= 1024);
 		/* allocate IB */
-		r = amdgpu_bo_alloc_and_map_sync(device, 4096, 4096,
+		r = amdgpu_bo_alloc_and_map_sync(device, ring_context->write_length, 4096,
 						 AMDGPU_GEM_DOMAIN_GTT, 0, AMDGPU_VM_MTYPE_UC,
 						 &ib_result_handle, &ib_result_cpu,
 						 &ib_result_mc_address, &va_handle,
@@ -146,11 +158,10 @@ static void amdgpu_create_ip_queues(amdgpu_device_handle device,
                          struct amdgpu_ring_context **ring_context_out,
                          int *available_rings_out)
 {
-	const int sdma_write_length = 128;
-	const int pm4_dw = 256;
+	struct amdgpu_dma_limits limits;
 	struct amdgpu_ring_context *ring_context = NULL;
 	int available_rings = 0;
-	int r, ring_id;
+	int r, ring_id, pm4_dw;
 
 	/* Get number of available queues */
 	struct drm_amdgpu_info_hw_ip hw_ip_info;
@@ -159,6 +170,9 @@ static void amdgpu_create_ip_queues(amdgpu_device_handle device,
 	memset(&hw_ip_info, 0, sizeof(hw_ip_info));
 	r = amdgpu_query_hw_ip_info(device, ip_block->type, 0, &hw_ip_info);
 	igt_assert_eq(r, 0);
+
+
+	amdgpu_dma_limits_query(device, &limits);
 
 	if (user_queue)
 		available_rings = ring_context->hw_ip_info.num_userq_slots ?
@@ -179,12 +193,17 @@ static void amdgpu_create_ip_queues(amdgpu_device_handle device,
 
 	for (ring_id = 0; (1 << ring_id) & available_rings; ring_id++) {
 		memset(&ring_context[ring_id], 0, sizeof(ring_context[ring_id]));
-		ring_context[ring_id].write_length = sdma_write_length;
+		ring_context[ring_id].write_length = amdgpu_dma_default_bytes(&limits, ip_block->type);
+		pm4_dw = ring_context[ring_id].write_length / 4 + 16;
 		ring_context[ring_id].pm4 = calloc(pm4_dw, sizeof(*ring_context[ring_id].pm4));
 		ring_context[ring_id].secure = secure;
 		ring_context[ring_id].pm4_size = pm4_dw;
 		ring_context[ring_id].res_cnt = 1;
 		ring_context[ring_id].user_queue = user_queue;
+		if (ip_block->funcs->family_id == FAMILY_GFX1150)
+			ring_context[ring_id].max_num_fences_fwm = 4;
+		else
+			ring_context[ring_id].max_num_fences_fwm = 32;
 		igt_assert(ring_context[ring_id].pm4);
 
 		/* Copy the previously queried HW IP info instead of querying again */
@@ -222,7 +241,7 @@ static void amdgpu_command_submission_write_linear(amdgpu_device_handle device,
 	for (ring_id = 0; (1 << ring_id) & available_rings; ring_id++) {
 		/* Allocate buffer for this ring_id */
 		r = amdgpu_bo_alloc_and_map_sync(device,
-			ring_context[ring_id].write_length * sizeof(uint32_t),
+			ring_context[ring_id].write_length,
 			4096, AMDGPU_GEM_DOMAIN_GTT,
 			gtt_flags[0],
 			AMDGPU_VM_MTYPE_UC,
@@ -243,7 +262,7 @@ static void amdgpu_command_submission_write_linear(amdgpu_device_handle device,
 
 		/* Clear buffer */
 		memset((void *)ring_context[ring_id].bo_cpu, 0,
-		       ring_context[ring_id].write_length * sizeof(uint32_t));
+		       ring_context[ring_id].write_length);
 
 		ring_context[ring_id].resources[0] = ring_context[ring_id].bo;
 
@@ -255,7 +274,7 @@ static void amdgpu_command_submission_write_linear(amdgpu_device_handle device,
 
 		/* Verification */
 		if (!secure) {
-			r = ip_block->funcs->compare(ip_block->funcs, &ring_context[ring_id], 1);
+			r = ip_block->funcs->compare(ip_block->funcs, &ring_context[ring_id], 4);
 			igt_assert_eq(r, 0);
 		} else if (ip_block->type == AMDGPU_HW_IP_GFX) {
 			ip_block->funcs->write_linear_atomic(ip_block->funcs, &ring_context[ring_id], &ring_context[ring_id].pm4_dw);
@@ -275,7 +294,7 @@ static void amdgpu_command_submission_write_linear(amdgpu_device_handle device,
 		/* Clean up buffer */
 		amdgpu_bo_unmap_and_free(ring_context[ring_id].bo, ring_context[ring_id].va_handle,
 		ring_context[ring_id].bo_mc,
-		ring_context[ring_id].write_length * sizeof(uint32_t));
+		ring_context[ring_id].write_length);
 	}
 }
 
@@ -356,19 +375,22 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 						   bool secure, bool user_queue)
 
 {
-	const int sdma_write_length = 128;
-	const int pm4_dw = 256;
-
+	struct amdgpu_dma_limits limits;
 	struct amdgpu_ring_context *ring_context;
-	int i, r, loop, ring_id;
+	int i, r, loop, ring_id, pm4_dw;
 
 	uint64_t gtt_flags[2] = {0, AMDGPU_GEM_CREATE_CPU_GTT_USWC};
 	uint32_t available_rings = 0;
 
+	amdgpu_dma_limits_query(device, &limits);
+
 	ring_context = calloc(1, sizeof(*ring_context));
 	igt_assert(ring_context);
-	/* setup parameters */
-	ring_context->write_length =  sdma_write_length;
+	/* setup parameters — write_linear embeds inline data in PM4,
+	 * so pm4 buffer must hold header (max 10 DWORDs) + write_length/4 DWORDs.
+	 */
+	ring_context->write_length = amdgpu_dma_default_bytes(&limits, ip_block->type);
+	pm4_dw = ring_context->write_length / 4 + 16;
 	ring_context->pm4 = calloc(pm4_dw, sizeof(*ring_context->pm4));
 	ring_context->secure = secure;
 	ring_context->pm4_size = pm4_dw;
@@ -395,16 +417,13 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 		igt_assert_eq(r, 0);
 	}
 
-
-
 	for (ring_id = 0; (1 << ring_id) & available_rings; ring_id++) {
 		loop = 0;
 		ring_context->ring_id = ring_id;
 		while (loop < 2) {
 			/* allocate UC bo for sDMA use */
 			r = amdgpu_bo_alloc_and_map_sync(device,
-							 ring_context->write_length *
-							 sizeof(uint32_t),
+							 ring_context->write_length,
 							 4096, AMDGPU_GEM_DOMAIN_GTT,
 							 gtt_flags[loop],
 							 AMDGPU_VM_MTYPE_UC,
@@ -426,7 +445,7 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 
 			/* clear bo */
 			memset((void *)ring_context->bo_cpu, 0,
-			       ring_context->write_length * sizeof(uint32_t));
+			       ring_context->write_length);
 
 			ring_context->resources[0] = ring_context->bo;
 
@@ -435,12 +454,16 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 
 			ring_context->ring_id = ring_id;
 
+			igt_info("%s write_linear: ring %d, size %lu bytes (%lu KB)\n",
+				amdgpu_ip_type_name(ip_block->type), ring_id,
+				(unsigned long)ring_context->write_length,
+				(unsigned long)ring_context->write_length / 1024);
 			 amdgpu_test_exec_cs_helper(device, ip_block->type, ring_context, 0);
 
 			/* verify if SDMA test result meets with expected */
 			i = 0;
 			if (!secure) {
-				r = ip_block->funcs->compare(ip_block->funcs, ring_context, 1);
+				r = ip_block->funcs->compare(ip_block->funcs, ring_context, 4);
 				igt_assert_eq(r, 0);
 			} else if (ip_block->type == AMDGPU_HW_IP_GFX) {
 				ip_block->funcs->write_linear_atomic(ip_block->funcs, ring_context, &ring_context->pm4_dw);
@@ -463,7 +486,7 @@ void amdgpu_command_submission_write_linear_helper(amdgpu_device_handle device,
 			}
 
 			amdgpu_bo_unmap_and_free(ring_context->bo, ring_context->va_handle, ring_context->bo_mc,
-						 ring_context->write_length * sizeof(uint32_t));
+						 ring_context->write_length);
 			loop++;
 		}
 	}
@@ -491,16 +514,20 @@ void amdgpu_command_submission_const_fill_helper(amdgpu_device_handle device,
 						 const struct amdgpu_ip_block_version *ip_block,
 						 bool user_queue)
 {
-	const int sdma_write_length = 1024 * 1024;
 	const int pm4_dw = 256;
+	struct amdgpu_dma_limits limits;
 
 	struct amdgpu_ring_context *ring_context;
 	int r, loop, ring_id;
 	uint32_t available_rings = 0;
 	uint64_t gtt_flags[2] = {0, AMDGPU_GEM_CREATE_CPU_GTT_USWC};
+	bool do_once = true;
+
+	amdgpu_dma_limits_query(device, &limits);
 
 	ring_context = calloc(1, sizeof(*ring_context));
-	ring_context->write_length =  sdma_write_length;
+	/* const_fill/copy packets have no inline data — pm4_dw=256 is ample */
+	ring_context->write_length = amdgpu_dma_default_bytes(&limits, ip_block->type);
 	ring_context->pm4 = calloc(pm4_dw, sizeof(*ring_context->pm4));
 	ring_context->secure = false;
 	ring_context->pm4_size = pm4_dw;
@@ -527,9 +554,13 @@ void amdgpu_command_submission_const_fill_helper(amdgpu_device_handle device,
 		/* prepare resource */
 		loop = 0;
 		ring_context->ring_id = ring_id;
-		while (loop < 2) {
-			/* allocate UC bo for sDMA use */
-			r = amdgpu_bo_alloc_and_map_sync(device, ring_context->write_length,
+			while (loop < 2) {
+				ring_context->write_length = (do_once == true && ring_context->ring_id == 0) ?
+					amdgpu_dma_max_bytes(&limits, ip_block->type) :
+					amdgpu_dma_default_bytes(&limits, ip_block->type);
+				do_once = false;
+				/* allocate UC bo for sDMA use */
+				r = amdgpu_bo_alloc_and_map_sync(device, ring_context->write_length,
 							 4096, AMDGPU_GEM_DOMAIN_GTT,
 							 gtt_flags[loop],
 							 AMDGPU_VM_MTYPE_UC,
@@ -556,6 +587,10 @@ void amdgpu_command_submission_const_fill_helper(amdgpu_device_handle device,
 			/* fulfill PM4: test DMA const fill */
 			ip_block->funcs->const_fill(ip_block->funcs, ring_context, &ring_context->pm4_dw);
 
+			igt_info("%s const_fill: ring %d, size %lu bytes (%lu KB)\n",
+				amdgpu_ip_type_name(ip_block->type), ring_id,
+				(unsigned long)ring_context->write_length,
+				(unsigned long)ring_context->write_length / 1024);
 			amdgpu_test_exec_cs_helper(device, ip_block->type, ring_context, 0);
 
 			/* verify if SDMA test result meets with expected */
@@ -590,17 +625,20 @@ void amdgpu_command_submission_copy_linear_helper(amdgpu_device_handle device,
 						  const struct amdgpu_ip_block_version *ip_block,
 						  bool user_queue)
 {
-	const int sdma_write_length = 1024;
 	const int pm4_dw = 256;
+	struct amdgpu_dma_limits limits;
 
 	struct amdgpu_ring_context *ring_context;
 	int r, loop1, loop2, ring_id;
 	uint32_t available_rings = 0;
 	uint64_t gtt_flags[2] = {0, AMDGPU_GEM_CREATE_CPU_GTT_USWC};
+	bool do_once = true;
 
+	amdgpu_dma_limits_query(device, &limits);
 
 	ring_context = calloc(1, sizeof(*ring_context));
-	ring_context->write_length =  sdma_write_length;
+	/* copy_linear packets have no inline data — pm4_dw=256 is ample */
+	ring_context->write_length = amdgpu_dma_default_bytes(&limits, ip_block->type);
 	ring_context->pm4 = calloc(pm4_dw, sizeof(*ring_context->pm4));
 	ring_context->secure = false;
 	ring_context->pm4_size = pm4_dw;
@@ -625,11 +663,15 @@ void amdgpu_command_submission_copy_linear_helper(amdgpu_device_handle device,
 
 	for (ring_id = 0; (1 << ring_id) & available_rings; ring_id++) {
 		loop1 = loop2 = 0;
-		ring_context->ring_id = ring_id;
-	/* run 9 circle to test all mapping combination */
+			ring_context->ring_id = ring_id;
+		/* run 9 circle to test all mapping combination */
 		while (loop1 < 2) {
 			while (loop2 < 2) {
 				/* allocate UC bo1for sDMA use */
+				ring_context->write_length = (do_once && ring_context->ring_id == 0) ?
+					amdgpu_dma_max_bytes(&limits, ip_block->type) :
+					amdgpu_dma_default_bytes(&limits, ip_block->type);
+				do_once = false;
 				r = amdgpu_bo_alloc_and_map_sync(device, ring_context->write_length,
 							4096, AMDGPU_GEM_DOMAIN_GTT,
 							gtt_flags[loop1],
@@ -681,6 +723,10 @@ void amdgpu_command_submission_copy_linear_helper(amdgpu_device_handle device,
 
 				ip_block->funcs->copy_linear(ip_block->funcs, ring_context, &ring_context->pm4_dw);
 
+				igt_info("%s copy_linear: ring %d, size %lu bytes (%lu KB)\n",
+					amdgpu_ip_type_name(ip_block->type), ring_id,
+					(unsigned long)ring_context->write_length,
+					(unsigned long)ring_context->write_length / 1024);
 				amdgpu_test_exec_cs_helper(device, ip_block->type, ring_context, 0);
 
 				/* verify if SDMA test result meets with expected */
@@ -972,7 +1018,7 @@ cmd_context_t* cmd_context_create(amdgpu_device_handle device,
 	} else {
 		/* Allocate internal BO for command operations */
 		r = amdgpu_bo_alloc_and_map(device,
-				   ctx->ring_ctx->write_length * sizeof(uint32_t),
+				   ctx->ring_ctx->write_length,
 				   4096,
 				   AMDGPU_GEM_DOMAIN_GTT,
 				   0,
@@ -1036,7 +1082,7 @@ void cmd_context_destroy(cmd_context_t *ctx, bool destroy_external_bo)
 				    /* Internal BO with VA handle - full cleanup */
 				    amdgpu_bo_unmap_and_free(ctx->ring_ctx->bo, ctx->ring_ctx->va_handle,
 							   ctx->ring_ctx->bo_mc,
-							   ctx->ring_ctx->write_length * sizeof(uint32_t));
+							   ctx->ring_ctx->write_length);
 				} else if (destroy_external_bo) {
 				    /* External BO without VA handle - just free the BO */
 				    amdgpu_bo_free(ctx->ring_ctx->bo);
@@ -1211,7 +1257,7 @@ int cmd_place_packet(cmd_context_t *ctx, const cmd_packet_params_t *params)
 
 	/* Clear the buffer before operation */
 	memset((void *)ctx->ring_ctx->bo_cpu, 0,
-	ctx->ring_ctx->write_length * sizeof(uint32_t));
+	ctx->ring_ctx->write_length);
 
 
 	/* Build the command packet based on type */
@@ -1222,7 +1268,7 @@ int cmd_place_packet(cmd_context_t *ctx, const cmd_packet_params_t *params)
 
 		/* TODO: allow user set the dst and data */
 		//ctx->ring_ctx->bo_mc = params->dst_addr;
-		ctx->ring_ctx->write_length = params->size / sizeof(uint32_t);
+		ctx->ring_ctx->write_length = params->size;
 
 		/* Build PM4 packet */
 		result = ctx->ip_block->funcs->write_linear(ctx->ip_block->funcs,
@@ -1264,7 +1310,7 @@ int cmd_place_packet(cmd_context_t *ctx, const cmd_packet_params_t *params)
 	    /* For copy operations, we need both source and destination addresses */
 	    /* This would require extending the API to pass both addresses */
 	    /* For now, use the internal buffer as source */
-	    ctx->ring_ctx->write_length = params->size / sizeof(uint32_t);
+	    ctx->ring_ctx->write_length = params->size;
 
 	    result = ctx->ip_block->funcs->copy_linear(ctx->ip_block->funcs,
 						      ctx->ring_ctx,
@@ -1438,4 +1484,100 @@ uint32_t cmd_get_available_rings(amdgpu_device_handle device,
 	} else {
 		return __builtin_popcountll(hw_ip_info.available_rings);
 	}
+}
+
+/**
+ * get_sdma_max_bytes - query SDMA IP version and return max transfer size
+ *
+ * The SDMA COUNT field width varies by generation.
+ * On v4 (Vega) and newer, the COUNT field encodes COUNT-1, i.e.,
+ * COUNT=0 transfers 1 byte, so the true max is 1 << field_width.
+ *
+ *   v1-2 (SI):       21 bits            = 0x1fffff bytes   (~2 MB)
+ *   v3   (VI):       22 bits, 32B align = 0x3fffe0 bytes   (~4 MB)
+ *   v4   (Vega):     22 bits, COUNT-1   = 1<<22 bytes      (4 MB)
+ *   v4.4 (MI):       30 bits, COUNT-1   = 1<<30 bytes      (1 GB)
+ *   v5.0 (NV1x):     22 bits, COUNT-1   = 1<<22 bytes      (4 MB)
+ *   v5.2 (NV2x):     30 bits, COUNT-1   = 1<<30 bytes      (1 GB)
+ *   v6   (NV3x):     30 bits, COUNT-1   = 1<<30 bytes      (1 GB)
+ *   v7   (NV4x):     30 bits, COUNT-1   = 1<<30 bytes      (1 GB)
+ */
+static uint64_t
+get_sdma_max_bytes(amdgpu_device_handle device)
+{
+	struct drm_amdgpu_info_hw_ip ip = {0};
+	int r;
+
+	r = amdgpu_query_hw_ip_info(device, AMDGPU_HW_IP_DMA, 0, &ip);
+	igt_assert_eq(r, 0);
+
+	if (ip.hw_ip_version_major <= 2)
+		return 0x1fffffULL;                     /* SI, raw count */
+	else if (ip.hw_ip_version_major == 3)
+		return 0x3fffe0ULL;                     /* VI, 32B aligned */
+	else if (ip.hw_ip_version_major == 4 && ip.hw_ip_version_minor < 4)
+		return 1ULL << 22;                      /* Vega, COUNT-1 */
+	else if (ip.hw_ip_version_major == 4 && ip.hw_ip_version_minor >= 4)
+		return 1ULL << 30;                      /* MI, COUNT-1 */
+	else if (ip.hw_ip_version_major == 5 && ip.hw_ip_version_minor < 2)
+		return 1ULL << 22;                      /* NV1x, COUNT-1 */
+	else if (ip.hw_ip_version_major == 5 && ip.hw_ip_version_minor >= 2)
+		return 1ULL << 30;                      /* NV2x, COUNT-1 */
+	else if (ip.hw_ip_version_major >= 6)
+		return 1ULL << 30;                      /* NV3x/NV4x+, COUNT-1 */
+
+	igt_skip("Unknown SDMA IP version");
+	return 0;
+}
+
+/**
+ * GFX/Compute use PACKET3_DMA_DATA for fill/copy whose size field is
+ * 26 bits in BYTES (max 64 MB).  PACKET3_WRITE_DATA inline count
+ * is 14 bits in DWORDs (max 16384 DW = 64 KB), but that limit is
+ * handled by pm4 buffer sizing, not by this struct.
+ */
+#define GFX_CP_DMA_MAX_BYTES   ((1ULL << 26) - 4)  /* 64 MB, 26-bit byte_count, DWORD-aligned */
+
+/**
+ * get_gfx_cp_dma_max_bytes - return max CP DMA (PACKET3_DMA_DATA) transfer size
+ *
+ * The register spec says 26 bits (64 MB) for all generations, but pre-GFX9
+ * hardware (Polaris / GFX8 and older) silently truncates at 20 bits (1 MB).
+ * Observed: const_fill on Polaris writes only 2 MB, rest stays zero.
+ */
+static uint64_t
+get_gfx_cp_dma_max_bytes(amdgpu_device_handle device)
+{
+	struct drm_amdgpu_info_hw_ip ip = {};
+	int r;
+
+	r = amdgpu_query_hw_ip_info(device, AMDGPU_HW_IP_GFX, 0, &ip);
+	igt_assert_eq(r, 0);
+
+	/* GFX9 (Vega) and newer: full 26-bit byte_count */
+	if (ip.hw_ip_version_major >= 9)
+		return GFX_CP_DMA_MAX_BYTES;
+
+	/* GFX8 (Polaris) and older: effective limit is 20 bits */
+	return 1ULL << 20;                         /* 1 MB */
+}
+
+void
+amdgpu_dma_limits_query(amdgpu_device_handle device,
+			    struct amdgpu_dma_limits *limits)
+{
+	memset(limits, 0, sizeof(*limits));
+
+	limits->sdma_max_bytes    = get_sdma_max_bytes(device);
+	limits->gfx_max_bytes     = get_gfx_cp_dma_max_bytes(device);
+	limits->compute_max_bytes = get_gfx_cp_dma_max_bytes(device);
+
+	/*
+	 * Default safe small sizes for quick smoke tests.
+	 * write_linear uses inline data so keep it small (512 bytes = 128 DW).
+	 * const_fill and copy_linear have no inline data, can be larger.
+	 */
+	limits->sdma_default_bytes    = 512;    /* 128 DWORDs */
+	limits->gfx_default_bytes     = 1024;   /* 256 DWORDs */
+	limits->compute_default_bytes = 1024;   /* 256 DWORDs */
 }

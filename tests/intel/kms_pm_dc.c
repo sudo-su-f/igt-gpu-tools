@@ -79,15 +79,9 @@
  * Description: This test validates display engine entry to DC5 state while PSR is active on Pipe B
  */
 
-/* DC State Flags */
-#define CHECK_DC5	(1 << 0)
-#define CHECK_DC6	(1 << 1)
-#define CHECK_DC3CO	(1 << 2)
-
 #define PWR_DOMAIN_INFO "i915_power_domain_info"
 #define RPM_STATUS "i915_runtime_pm_status"
 #define KMS_HELPER "/sys/module/drm_kms_helper/parameters/"
-#define PACKAGE_CSTATE_PATH  "pmc_core/package_cstate_show"
 #define KMS_POLL_DISABLE 0
 #define DC9_RESETS_DC_COUNTERS(devid) (!(IS_DG1(devid) || IS_DG2(devid) || intel_display_ver(devid) >= 14))
 #define SEC 1
@@ -116,7 +110,6 @@ typedef struct {
 	bool runtime_suspend_disabled;
 } data_t;
 
-static bool dc_state_wait_entry(int drm_fd, int dc_flag, int prev_dc_count);
 static void check_dc_counter(data_t *data, int dc_flag, uint32_t prev_dc_count);
 
 static void set_output_on_pipe_b(data_t *data)
@@ -167,6 +160,10 @@ static void setup_output(data_t *data)
 		igt_skip_on_f(!is_low_power, "Low power pipe was not selected for the DC5 transaction.\n");
 
 		if (c->connector_type != DRM_MODE_CONNECTOR_eDP)
+			continue;
+
+		if (!psr_sink_support(data->drm_fd, data->debugfs_fd,
+				      data->op_psr_mode, output))
 			continue;
 
 		igt_output_set_crtc(output, crtc);
@@ -260,82 +257,20 @@ static void create_color_fb(data_t *data, igt_fb_t *fb, color_t *fb_color)
 	paint_rectangles(data, data->mode, fb_color, fb);
 }
 
-static uint32_t get_dc_counter(char *dc_data)
-{
-	char *e;
-	long ret;
-	char *s = strchr(dc_data, ':');
-
-	igt_assert(s);
-	s++;
-	ret = strtol(s, &e, 10);
-	igt_assert(((ret != LONG_MIN && ret != LONG_MAX) || errno != ERANGE) && e > s && *e == '\n' && ret >= 0);
-	return ret;
-}
-
-static char *get_dc6_counter(const char *buf)
-{
-	char *str;
-
-	str = strstr(buf, "DC5 -> DC6 count");
-	if (!str)
-		str = strstr(buf, "DC5 -> DC6 allowed count");
-
-	return str;
-}
-
-static uint32_t read_dc_counter(uint32_t debugfs_fd, int dc_flag)
-{
-	char buf[4096];
-	char *str;
-
-	igt_debugfs_simple_read(debugfs_fd, "i915_dmc_info", buf, sizeof(buf));
-
-	if (dc_flag & CHECK_DC5) {
-		str = strstr(buf, "DC3 -> DC5 count");
-		igt_assert_f(str, "DC5 counter is not available\n");
-	} else if (dc_flag & CHECK_DC6) {
-		str = get_dc6_counter(buf);
-		igt_assert_f(str, "No DC6 counter available\n");
-	} else if (dc_flag & CHECK_DC3CO) {
-		str = strstr(buf, "DC3CO count");
-		igt_assert_f(str, "DC3CO counter is not available\n");
-	} else {
-		igt_assert(!"reached");
-		str = NULL;
-	}
-
-	return get_dc_counter(str);
-}
-
-static bool dc_state_wait_entry(int debugfs_fd, int dc_flag, int prev_dc_count)
-{
-	return igt_wait(read_dc_counter(debugfs_fd, dc_flag) >
-			prev_dc_count, 3000, 100);
-}
-
-static const char *dc_state_name(int dc_flag)
-{
-	if (dc_flag & CHECK_DC3CO)
-		return "DC3CO";
-	else if (dc_flag & CHECK_DC5)
-		return "DC5";
-	else
-		return "DC6";
-}
-
 static void check_dc_counter(data_t *data, int dc_flag, uint32_t prev_dc_count)
 {
-	igt_assert_f(dc_state_wait_entry(data->debugfs_fd, dc_flag, prev_dc_count),
-		     "%s state is not achieved\n%s:\n%s\n", dc_state_name(dc_flag), PWR_DOMAIN_INFO,
-		     data->debugfs_dump = igt_sysfs_get(data->debugfs_fd, PWR_DOMAIN_INFO));
+	igt_assert_f(igt_dc_state_wait_entry(data->debugfs_fd, dc_flag, prev_dc_count),
+		     "%s state is not achieved\n%s:\n%s\n", igt_dc_state_name(dc_flag),
+		     PWR_DOMAIN_INFO, data->debugfs_dump = igt_sysfs_get(data->debugfs_fd,
+		     PWR_DOMAIN_INFO));
 }
 
 static void check_dc_counter_negative(data_t *data, int dc_flag, uint32_t prev_dc_count)
 {
-	igt_assert_f(!dc_state_wait_entry(data->debugfs_fd, dc_flag, prev_dc_count),
-		     "%s state is achieved\n%s:\n%s\n", dc_state_name(dc_flag), PWR_DOMAIN_INFO,
-		     data->debugfs_dump = igt_sysfs_get(data->debugfs_fd, PWR_DOMAIN_INFO));
+	igt_assert_f(!igt_dc_state_wait_entry(data->debugfs_fd, dc_flag, prev_dc_count),
+		     "%s state is achieved\n%s:\n%s\n", igt_dc_state_name(dc_flag),
+		     PWR_DOMAIN_INFO, data->debugfs_dump = igt_sysfs_get(data->debugfs_fd,
+		     PWR_DOMAIN_INFO));
 }
 
 static void setup_videoplayback(data_t *data)
@@ -366,7 +301,7 @@ static void check_dc3co_with_videoplayback_like_load(data_t *data)
 	primary = igt_output_get_plane_type(data->output,
 					    DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, NULL);
-	dc3co_prev_cnt = read_dc_counter(data->debugfs_fd, CHECK_DC3CO);
+	dc3co_prev_cnt = igt_read_dc_counter(data->debugfs_fd, IGT_INTEL_CHECK_DC3CO);
 
 	/* Calculate delay to generate idle frame in usec*/
 	delay = 1.5 * ((1000 * 1000) / data->mode->vrefresh);
@@ -381,47 +316,20 @@ static void check_dc3co_with_videoplayback_like_load(data_t *data)
 		usleep(delay);
 	}
 
-	igt_require_f(dc_state_wait_entry(data->debugfs_fd,
-		      CHECK_DC3CO, dc3co_prev_cnt), "dc3co-vpb-simulation not enabled\n");
-}
-
-static void require_dc_counter(int debugfs_fd, int dc_flag)
-{
-	char *str;
-	char buf[4096];
-
-	igt_debugfs_simple_read(debugfs_fd, "i915_dmc_info",
-				buf, sizeof(buf));
-
-	switch (dc_flag) {
-	case CHECK_DC3CO:
-		igt_skip_on_f(!strstr(buf, "DC3CO count"),
-			      "DC3CO counter is not available\n");
-		break;
-	case CHECK_DC5:
-		igt_skip_on_f(!strstr(buf, "DC3 -> DC5 count"),
-			      "DC5 counter is not available\n");
-		break;
-	case CHECK_DC6:
-		str = get_dc6_counter(buf);
-		igt_skip_on_f(!str, "No DC6 counter available\n");
-		break;
-	default:
-		igt_assert_f(0, "Unknown DC counter %d\n", dc_flag);
-	}
+	igt_require_f(igt_dc_state_wait_entry(data->debugfs_fd, IGT_INTEL_CHECK_DC3CO,
+					      dc3co_prev_cnt), "dc3co-vpb-simulation not enabled\n");
 }
 
 static void setup_dc3co(data_t *data)
 {
-	data->op_psr_mode = PSR_MODE_2;
-	psr_enable(data->drm_fd, data->debugfs_fd, data->op_psr_mode, NULL);
-	igt_require_f(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, NULL),
+	psr_enable(data->drm_fd, data->debugfs_fd, data->op_psr_mode, data->output);
+	igt_require_f(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, data->output),
 		      "PSR2 is not enabled\n");
 }
 
 static void test_dc3co_vpb_simulation(data_t *data)
 {
-	require_dc_counter(data->debugfs_fd, CHECK_DC3CO);
+	igt_require_dc_counter(data->debugfs_fd, IGT_INTEL_CHECK_DC3CO);
 	setup_output(data);
 	setup_dc3co(data);
 	setup_videoplayback(data);
@@ -433,11 +341,11 @@ static void test_dc5_retention_flops(data_t *data, int dc_flag)
 {
 	uint32_t dc_counter_before_psr;
 
-	require_dc_counter(data->debugfs_fd, dc_flag);
-	dc_counter_before_psr = read_dc_counter(data->debugfs_fd, dc_flag);
+	igt_require_dc_counter(data->debugfs_fd, dc_flag);
+	dc_counter_before_psr = igt_read_dc_counter(data->debugfs_fd, dc_flag);
 	set_output_on_pipe_b(data);
 	setup_primary(data);
-	igt_assert(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, NULL));
+	igt_assert(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, data->output));
 	check_dc_counter(data, dc_flag, dc_counter_before_psr);
 	cleanup_dc_psr(data);
 }
@@ -446,12 +354,12 @@ static void test_dc_state_psr(data_t *data, int dc_flag)
 {
 	uint32_t dc_counter_before_psr;
 
-	require_dc_counter(data->debugfs_fd, dc_flag);
-	dc_counter_before_psr = read_dc_counter(data->debugfs_fd, dc_flag);
+	igt_require_dc_counter(data->debugfs_fd, dc_flag);
+	dc_counter_before_psr = igt_read_dc_counter(data->debugfs_fd, dc_flag);
 	setup_output(data);
 	setup_primary(data);
 	igt_require(!psr_disabled_check(data->debugfs_fd));
-	igt_assert(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, NULL));
+	igt_assert(psr_wait_entry(data->debugfs_fd, data->op_psr_mode, data->output));
 	check_dc_counter(data, dc_flag, dc_counter_before_psr);
 	psr_sink_error_check(data->debugfs_fd, data->op_psr_mode, data->output);
 	cleanup_dc_psr(data);
@@ -480,6 +388,17 @@ static void setup_dc_dpms(data_t *data)
 	}
 }
 
+static bool has_connected_outputs(data_t *data)
+{
+	igt_display_t *display = &data->display;
+	igt_output_t *output;
+
+	for_each_connected_output(display, output)
+		return true;
+
+	return false;
+}
+
 static void dpms_off(data_t *data)
 {
 	for (int i = 0; i < data->display.n_outputs; i++) {
@@ -501,7 +420,13 @@ static void dpms_on(data_t *data)
 					   DRM_MODE_DPMS_ON);
 	}
 
-	if (!data->runtime_suspend_disabled)
+	/*
+	 * DPMS_ON on disconnected connectors does not enable any pipe
+	 * or acquire a runtime PM wakeref, so the device will never
+	 * transition to active state. Skip the wait when no outputs
+	 * are physically connected.
+	 */
+	if (!data->runtime_suspend_disabled && has_connected_outputs(data))
 		igt_assert(igt_wait_for_pm_status
 			   (IGT_RUNTIME_PM_STATUS_ACTIVE));
 }
@@ -510,9 +435,9 @@ static void test_dc_state_dpms(data_t *data, int dc_flag)
 {
 	uint32_t dc_counter;
 
-	require_dc_counter(data->debugfs_fd, dc_flag);
+	igt_require_dc_counter(data->debugfs_fd, dc_flag);
 	setup_dc_dpms(data);
-	dc_counter = read_dc_counter(data->debugfs_fd, dc_flag);
+	dc_counter = igt_read_dc_counter(data->debugfs_fd, dc_flag);
 	dpms_off(data);
 	check_dc_counter(data, dc_flag, dc_counter);
 	dpms_on(data);
@@ -523,21 +448,12 @@ static void test_dc_state_dpms_negative(data_t *data, int dc_flag)
 {
 	uint32_t dc_counter;
 
-	require_dc_counter(data->debugfs_fd, dc_flag);
+	igt_require_dc_counter(data->debugfs_fd, dc_flag);
 	setup_dc_dpms(data);
-	dc_counter = read_dc_counter(data->debugfs_fd, dc_flag);
+	dc_counter = igt_read_dc_counter(data->debugfs_fd, dc_flag);
 	dpms_on(data);
 	check_dc_counter_negative(data, dc_flag, dc_counter);
 	cleanup_dc_dpms(data);
-}
-
-static bool support_dc6(int debugfs_fd)
-{
-	char buf[4096];
-
-	igt_debugfs_simple_read(debugfs_fd, "i915_dmc_info",
-				buf, sizeof(buf));
-	return strstr(buf, "DC5 -> DC6 count");
 }
 
 static uint64_t read_runtime_suspended_time(int drm_fd)
@@ -562,7 +478,8 @@ static bool dc9_wait_entry(data_t *data, int dc_target, int prev_dc, uint64_t pr
 	 */
 	return igt_wait((read_runtime_suspended_time(data->drm_fd) > prev_rpm) &&
 			(!DC9_RESETS_DC_COUNTERS(data->devid) ||
-			(read_dc_counter(data->debugfs_fd, dc_target) < prev_dc)), msecs, 1000);
+			(igt_read_dc_counter(data->debugfs_fd, dc_target) < prev_dc)), msecs,
+			1000);
 }
 
 static void check_dc9(data_t *data, int dc_target, int prev_dc, int prev_rpm)
@@ -582,12 +499,12 @@ static void setup_dc9_dpms(data_t *data, int dc_target)
 	__igt_sysfs_set_boolean(sysfs_fd, "poll", KMS_POLL_DISABLE);
 	close(sysfs_fd);
 	if (DC9_RESETS_DC_COUNTERS(data->devid)) {
-		prev_dc = read_dc_counter(data->debugfs_fd, dc_target);
+		prev_dc = igt_read_dc_counter(data->debugfs_fd, dc_target);
 		setup_dc_dpms(data);
 		dpms_off(data);
-		igt_skip_on_f(!(igt_wait(read_dc_counter(data->debugfs_fd, dc_target) >
+		igt_skip_on_f(!(igt_wait(igt_read_dc_counter(data->debugfs_fd, dc_target) >
 				prev_dc, 3000, 100)), "Unable to enters shallow DC states\n");
-		prev_dc = read_dc_counter(data->debugfs_fd, dc_target);
+		prev_dc = igt_read_dc_counter(data->debugfs_fd, dc_target);
 		dpms_on(data);
 		cleanup_dc_dpms(data);
 	}
@@ -601,8 +518,8 @@ static void test_dc9_dpms(data_t *data)
 {
 	int dc_target;
 
-	require_dc_counter(data->debugfs_fd, CHECK_DC5);
-	dc_target = support_dc6(data->debugfs_fd) ? CHECK_DC6 : CHECK_DC5;
+	igt_require_dc_counter(data->debugfs_fd, IGT_INTEL_CHECK_DC5);
+	dc_target = igt_support_dc6(data->debugfs_fd) ? IGT_INTEL_CHECK_DC6 : IGT_INTEL_CHECK_DC5;
 	setup_dc9_dpms(data, dc_target);
 }
 
@@ -621,21 +538,6 @@ static int has_panels_without_dc_support(igt_display_t *display)
 	return external_panel;
 }
 
-static unsigned int read_pkgc_counter(int debugfs_root_fd)
-{
-	char buf[4096];
-	char *str;
-	int len;
-
-	len = igt_sysfs_read(debugfs_root_fd, PACKAGE_CSTATE_PATH, buf, sizeof(buf) - 1);
-	igt_skip_on_f(len < 0, "PKGC state file not found\n");
-	buf[len] = '\0';
-	str = strstr(buf, "Package C10");
-	igt_skip_on_f(!str, "PKGC10 is not supported.\n");
-
-	return get_dc_counter(str);
-}
-
 static void test_deep_pkgc_state(data_t *data)
 {
 	unsigned int pre_val = 0, cur_val = 0;
@@ -649,6 +551,7 @@ static void test_deep_pkgc_state(data_t *data)
 	igt_display_t *display = &data->display;
 	igt_plane_t *primary;
 	igt_output_t *output = NULL;
+	drmModeModeInfo *mode;
 
 	for_each_crtc_with_valid_output(display, crtc, output) {
 		if (output->config.connector->connector_type == DRM_MODE_CONNECTOR_eDP) {
@@ -678,8 +581,8 @@ static void test_deep_pkgc_state(data_t *data)
 	igt_display_reset(display);
 
 	igt_output_set_crtc(output, crtc);
-	for_each_connector_mode(output) {
-		data->mode = &output->config.connector->modes[j__];
+	for_each_connector_mode(output, mode) {
+		data->mode = mode;
 		delay = (MSEC / (data->mode->vrefresh));
 		/*
 		 * Should be 5ms vblank time required to program higher
@@ -697,7 +600,7 @@ static void test_deep_pkgc_state(data_t *data)
 	igt_display_commit(&data->display);
 	/* Wait for the vblank to sync the frame time */
 	igt_wait_for_vblank_count(crtc, 1);
-	pre_val = read_pkgc_counter(data->debugfs_root_fd);
+	pre_val = igt_read_pkgc_counter(data->debugfs_root_fd);
 	/* Add a half-frame delay to ensure the flip occurs when the frame is active. */
 	usleep(delay * 0.5);
 
@@ -706,8 +609,9 @@ static void test_deep_pkgc_state(data_t *data)
 		igt_plane_set_fb(primary, flip ? &data->fb_rgb : &data->fb_rgr);
 		igt_display_commit(&data->display);
 
-		igt_wait((cur_val = read_pkgc_counter(data->debugfs_root_fd)) > pre_val,
-						      (delay * 2), (5 * MSEC));
+		igt_wait((cur_val = igt_read_pkgc_counter(data->debugfs_root_fd)) > pre_val,
+			 (delay * 2), (5 * MSEC));
+
 		if (cur_val > pre_val) {
 			pkgc_flag = true;
 			break;
@@ -757,31 +661,32 @@ int igt_main()
 	igt_describe("In this test we make sure that system enters DC3CO "
 		     "when PSR2 is active and system is in SLEEP state");
 	igt_subtest("dc3co-vpb-simulation") {
+		data.op_psr_mode = PSR_MODE_2;
 		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
-					     PSR_MODE_2, NULL));
+					     data.op_psr_mode, NULL));
 		test_dc3co_vpb_simulation(&data);
 	}
 
 	igt_describe("This test validates display engine entry to DC5 state "
 		     "while PSR is active");
 	igt_subtest("dc5-psr") {
-		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
-					     PSR_MODE_1, NULL));
 		data.op_psr_mode = PSR_MODE_1;
+		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
+					     data.op_psr_mode, NULL));
 		psr_enable(data.drm_fd, data.debugfs_fd, data.op_psr_mode, NULL);
-		test_dc_state_psr(&data, CHECK_DC5);
+		test_dc_state_psr(&data, IGT_INTEL_CHECK_DC5);
 	}
 
 	igt_describe("This test validates display engine entry to DC6 state "
 		     "while PSR is active");
 	igt_subtest("dc6-psr") {
-		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
-					     PSR_MODE_1, NULL));
 		data.op_psr_mode = PSR_MODE_1;
+		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
+					     data.op_psr_mode, NULL));
 		psr_enable(data.drm_fd, data.debugfs_fd, data.op_psr_mode, NULL);
 		igt_require_f(igt_pm_pc8_plus_residencies_enabled(data.msr_fd),
 			      "PC8+ residencies not supported\n");
-		test_dc_state_psr(&data, CHECK_DC6);
+		test_dc_state_psr(&data, IGT_INTEL_CHECK_DC6);
 	}
 
 	igt_describe("This test validates display engine entry to PKGC10 state "
@@ -796,20 +701,20 @@ int igt_main()
 	igt_describe("This test validates display engine entry to DC5 state "
 		     "while all connectors's DPMS property set to OFF");
 	igt_subtest("dc5-dpms") {
-		test_dc_state_dpms(&data, CHECK_DC5);
+		test_dc_state_dpms(&data, IGT_INTEL_CHECK_DC5);
 	}
 
 	igt_describe("This test validates display engine entry to DC5 state "
 		     "while PSR is active on Pipe B");
 	igt_subtest("dc5-retention-flops") {
+		data.op_psr_mode = PSR_MODE_1;
 		igt_require_f(intel_display_ver(data.devid) >= 30,
 			      "Test not supported on this platform.\n");
 		igt_require(psr_sink_support(data.drm_fd, data.debugfs_fd,
-					     PSR_MODE_1, NULL));
-		data.op_psr_mode = PSR_MODE_1;
+					     data.op_psr_mode, NULL));
 		psr_enable(data.drm_fd, data.debugfs_fd, data.op_psr_mode, NULL);
 		igt_require(!psr_disabled_check(data.debugfs_fd));
-		test_dc5_retention_flops(&data, CHECK_DC5);
+		test_dc5_retention_flops(&data, IGT_INTEL_CHECK_DC5);
 	}
 
 	igt_describe("This test validates negative scenario of DC5 display "
@@ -818,7 +723,7 @@ int igt_main()
 	igt_subtest("dc5-dpms-negative") {
 		igt_require_f(has_panels_without_dc_support(&data.display),
 			      "External panel not detected, skip execution\n");
-		test_dc_state_dpms_negative(&data, CHECK_DC5);
+		test_dc_state_dpms_negative(&data, IGT_INTEL_CHECK_DC5);
 	}
 
 	igt_describe("This test validates display engine entry to DC6 state "
@@ -826,7 +731,7 @@ int igt_main()
 	igt_subtest("dc6-dpms") {
 		igt_require_f(igt_pm_pc8_plus_residencies_enabled(data.msr_fd),
 			      "PC8+ residencies not supported\n");
-		test_dc_state_dpms(&data, CHECK_DC6);
+		test_dc_state_dpms(&data, IGT_INTEL_CHECK_DC6);
 
 	}
 

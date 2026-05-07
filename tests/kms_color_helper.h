@@ -68,8 +68,8 @@ typedef struct {
 	color_t coeffs[];
 } gamma_lut_t;
 
-bool pipe_output_combo_valid(data_t *data, enum pipe pipe);
-bool panel_supports_deep_color(int fd, char *output_name);
+bool crtc_output_combo_valid(data_t *data, igt_crtc_t *crtc);
+bool panel_supports_deep_color(igt_output_t *output);
 uint64_t get_max_bpc(igt_output_t *output);
 void paint_gradient_rectangles(data_t *data,
 			       drmModeModeInfo *mode,
@@ -104,15 +104,15 @@ void disable_prop(igt_crtc_t *pipe, enum igt_atomic_crtc_properties prop);
 drmModePropertyBlobPtr get_blob(data_t *data, igt_crtc_t *pipe,
 				enum igt_atomic_crtc_properties prop);
 bool crc_equal(igt_crc_t *a, igt_crc_t *b);
-int pipe_set_property_blob_id(igt_crtc_t *pipe,
+int crtc_set_property_blob_id(igt_crtc_t *pipe,
 			      enum igt_atomic_crtc_properties prop,
 			      uint32_t blob_id);
-int pipe_set_property_blob(igt_crtc_t *pipe,
+int crtc_set_property_blob(igt_crtc_t *pipe,
 			   enum igt_atomic_crtc_properties prop,
 			   void *ptr, size_t length);
-void invalid_gamma_lut_sizes(data_t *data, enum pipe p);
-void invalid_degamma_lut_sizes(data_t *data, enum pipe p);
-void invalid_ctm_matrix_sizes(data_t *data, enum pipe p);
+void invalid_gamma_lut_sizes(data_t *data, igt_crtc_t *crtc);
+void invalid_degamma_lut_sizes(data_t *data, igt_crtc_t *crtc);
+void invalid_ctm_matrix_sizes(data_t *data, igt_crtc_t *crtc);
 
 #endif
 

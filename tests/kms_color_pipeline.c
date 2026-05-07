@@ -43,14 +43,11 @@ static void test_cleanup(data_t *data)
 	}
 
 	igt_output_set_crtc(data->output, NULL);
-	igt_display_commit2(&data->display, COMMIT_ATOMIC);
+	igt_display_commit_atomic(&data->display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 }
 
-static void test_setup(data_t *data, enum pipe p)
+static void test_setup(data_t *data, igt_crtc_t *crtc)
 {
-	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, p);
-
 	igt_require_pipe_crc(data->drm_fd);
 	igt_require(crtc);
 	igt_require(crtc->n_planes > 0);
@@ -61,10 +58,15 @@ static void test_setup(data_t *data, enum pipe p)
 	data->mode = igt_output_get_mode(data->output);
 	igt_require(data->mode);
 
-	data->pipe_crc = igt_crtc_crc_new(data->primary->crtc,
+	data->pipe_crc = igt_crtc_crc_new(crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 
-	igt_display_commit2(&data->display, COMMIT_ATOMIC);
+	/* Disable Pipe color props. */
+	disable_ctm(crtc);
+	disable_degamma(crtc);
+	disable_gamma(crtc);
+
+	igt_display_commit_atomic(&data->display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
 }
 
 static bool ctm_colorop_only(kms_colorop_t *colorops[])
@@ -82,18 +84,59 @@ static bool ctm_colorop_only(kms_colorop_t *colorops[])
 	return true;
 }
 
-static bool test_plane_colorops(data_t *data,
-				const color_t *fb_colors,
-				const color_t *exp_colors,
-				kms_colorop_t *colorops[])
+static void
+capture_ref_crc(data_t *data, igt_output_t *output,
+		const color_t *fb_color, igt_crc_t *crc /* out */)
 {
-	igt_plane_t *plane = data->primary;
+	struct igt_fb fb;
+	drmModeModeInfo *mode;
+	igt_plane_t *primary;
+	char *crc_str;
+	int ret;
+
+	/*
+	 * Since CRC is collected at Pipe level,
+	 * collecting crc for primary plane
+	 * is enough for reference.
+	 */
+	primary = igt_output_get_plane(output, DRM_PLANE_TYPE_PRIMARY);
+
+	mode = igt_output_get_mode(output);
+	igt_assert_fd(igt_create_fb(data->drm_fd,
+				    mode->hdisplay, mode->vdisplay,
+				    DRM_FORMAT_XRGB8888,
+				    DRM_FORMAT_MOD_LINEAR,
+				    &fb));
+
+	paint_rectangles(data, mode, fb_color, &fb);
+	igt_plane_set_fb(primary, &fb);
+	ret = igt_display_try_commit_atomic(&data->display, 0, NULL);
+	igt_assert(!ret);
+
+	igt_wait_for_vblank(primary->crtc);
+	igt_pipe_crc_collect_crc(data->pipe_crc, crc);
+
+	igt_plane_set_fb(primary, NULL);
+	igt_display_commit_atomic(&data->display, 0, NULL);
+
+	igt_remove_fb(data->drm_fd, &fb);
+
+	crc_str = igt_crc_to_string(crc);
+	igt_debug("CRC for reference fb: %s\n", crc_str);
+	free(crc_str);
+}
+
+static void _test_plane_colorops(data_t *data,
+				 igt_plane_t *plane,
+				 const color_t *fb_colors,
+				 igt_crc_t *crc_ref,
+				 kms_colorop_t *colorops[])
+{
 	igt_display_t *display = &data->display;
 	drmModeModeInfo *mode = data->mode;
 	igt_colorop_t *color_pipeline;
-	igt_crc_t crc_ref, crc_pipe;
+	igt_crc_t crc_pipe;
 	struct igt_fb fb;
-	bool ret;
 
 	color_pipeline = get_color_pipeline(display, plane, colorops);
 	igt_skip_on(!color_pipeline);
@@ -105,22 +148,6 @@ static bool test_plane_colorops(data_t *data,
 				 DRM_FORMAT_XRGB8888,
 				 DRM_FORMAT_MOD_LINEAR,
 				 &fb));
-	igt_plane_set_fb(plane, &fb);
-
-	/* Disable Pipe color props. */
-	disable_ctm(plane->crtc);
-	disable_degamma(plane->crtc);
-	disable_gamma(plane->crtc);
-	igt_display_commit2(display, COMMIT_ATOMIC);
-
-	/* Reference (software-equivalent) CRC */
-	set_color_pipeline_bypass(plane);
-	paint_rectangles(data, mode, exp_colors, &fb);
-
-	igt_plane_set_fb(plane, &fb);
-	igt_display_commit2(display, COMMIT_ATOMIC);
-	igt_wait_for_vblank(plane->crtc);
-	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_ref);
 
 	/* Hardware pipeline CRC */
 	set_color_pipeline(display, plane, colorops, color_pipeline);
@@ -134,21 +161,43 @@ static bool test_plane_colorops(data_t *data,
 		paint_gradient_rectangles(data, mode, fb_colors, &fb);
 
 	igt_plane_set_fb(plane, &fb);
-	igt_display_commit2(display, COMMIT_ATOMIC);
+	igt_display_commit_atomic(&data->display, 0, NULL);
 	igt_wait_for_vblank(plane->crtc);
 	igt_pipe_crc_collect_crc(data->pipe_crc, &crc_pipe);
 
-	ret = igt_check_crc_equal(&crc_ref, &crc_pipe);
+	igt_assert_crc_equal(crc_ref, &crc_pipe);
 
 	/* Cleanup per-test state */
 	set_color_pipeline_bypass(plane);
 	reset_colorops(colorops);
 	igt_plane_set_fb(plane, NULL);
-	igt_display_commit2(display, COMMIT_ATOMIC);
+	igt_display_commit_atomic(&data->display, 0, NULL);
 
 	igt_remove_fb(data->drm_fd, &fb);
+}
 
-	return ret;
+static void test_plane_colorops(data_t *data, igt_crtc_t *crtc,
+				const color_t *fb_colors,
+				const color_t *exp_colors,
+				kms_colorop_t *colorops[])
+{
+	int n_planes = crtc->n_planes;
+	igt_output_t *output = data->output;
+	igt_plane_t *plane;
+	igt_crc_t ref_crc;
+
+	capture_ref_crc(data, output, exp_colors, &ref_crc);
+
+	for (int plane_id = 0; plane_id < n_planes; plane_id++) {
+		plane = igt_output_get_plane(output, plane_id);
+
+		if (!igt_plane_has_prop(plane, IGT_PLANE_COLOR_PIPELINE))
+			continue;
+
+		igt_dynamic_f("pipe-%s-plane-%u", igt_crtc_name(crtc), plane_id)
+			_test_plane_colorops(data, plane, fb_colors,
+					     &ref_crc, colorops);
+	}
 }
 
 static void
@@ -279,28 +328,19 @@ run_tests_for_plane(data_t *data)
 							 output) {
 				data->output = output;
 
-				if (!pipe_output_combo_valid(data, crtc->pipe))
+				if (!crtc_output_combo_valid(data, crtc))
 					continue;
 
-				test_setup(data, crtc->pipe);
+				test_setup(data,
+					   crtc);
 
-				if (!igt_plane_has_prop(data->primary, IGT_PLANE_COLOR_PIPELINE)) {
-					test_cleanup(data);
-					continue;
-				}
+				data->color_depth = 8;
+				data->drm_format = DRM_FORMAT_XRGB8888;
 
-				igt_dynamic_f("pipe-%s-%s",
-					       igt_crtc_name(crtc),
-					       igt_output_name(data->output)) {
-					data->color_depth = 8;
-					data->drm_format = DRM_FORMAT_XRGB8888;
-
-					igt_assert(test_plane_colorops(data,
-								       plane_colorops_tests[i].fb_colors,
-								       plane_colorops_tests[i].exp_colors,
-								       plane_colorops_tests[i].colorops));
-				}
-
+				test_plane_colorops(data, crtc,
+						    plane_colorops_tests[i].fb_colors,
+						    plane_colorops_tests[i].exp_colors,
+						    plane_colorops_tests[i].colorops);
 				test_cleanup(data);
 			}
 		}
@@ -309,7 +349,6 @@ run_tests_for_plane(data_t *data)
 
 int igt_main()
 {
-	int has_plane_color_pipeline = 0;
 	data_t data = {};
 
 	igt_fixture() {
@@ -324,13 +363,9 @@ int igt_main()
 		if (drmSetClientCap(data.drm_fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0)
 			data.display.is_atomic = 1;
 
-		if (drmSetClientCap(data.drm_fd, DRM_CLIENT_CAP_PLANE_COLOR_PIPELINE, 1) == 0)
-			has_plane_color_pipeline = 1;
-
 		kmstest_set_vt_graphics_mode();
 
 		igt_display_require(&data.display, data.drm_fd);
-		data.display.has_plane_color_pipeline = has_plane_color_pipeline;
 		igt_require(data.display.is_atomic);
 	}
 

@@ -57,4 +57,9 @@ static inline s64 sign_extend64(u64 value, int index)
 #define FIELD_GET(mask, reg) \
 	(typeof(mask))(((reg) & (mask)) >> __bf_shf(mask))
 
+#define BIT_U8(n) ((u8)(1U << (n)))
+#define BIT_U16(n) ((u16)(1U << (n)))
+#define BIT_U32(n) ((u32)(1U << (n)))
+#define BIT_U64(n) ((u64)(1ULL << (n)))
+
 #endif /* _INTEL_GPU_COMMANDS_SCAFFOLD_H_ */

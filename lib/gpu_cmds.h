@@ -39,6 +39,19 @@
 #include "intel_bufops.h"
 #include <assert.h>
 
+struct xe3p_cw2_interrupt_data {
+	uint32_t post_sync_op;
+	uint64_t post_sync_addr;
+	uint64_t post_sync_val;
+};
+
+struct xe3p_cw2_gpgpu_fill_data {
+	uint32_t buf_width;
+	uint32_t buf_height;
+	uint64_t buf_addr;
+	uint8_t color;
+};
+
 uint32_t
 gen7_fill_curbe_buffer_data(struct intel_bb *ibb, uint8_t color);
 
@@ -127,6 +140,13 @@ void
 xehp_emit_state_compute_mode(struct intel_bb *ibb, bool vrt);
 
 void
+xe3p_fill_interface_descriptor(struct intel_bb *ibb,
+			       struct intel_buf *dst,
+			       const uint32_t kernel[][4],
+			       size_t size,
+			       struct xe3p_interface_descriptor_data *idd);
+
+void
 xehp_emit_state_binding_table_pool_alloc(struct intel_bb *ibb);
 
 void
@@ -138,10 +158,30 @@ void
 xehp_emit_state_base_address(struct intel_bb *ibb);
 
 void
+xe3p_emit_state_base_address(struct intel_bb *ibb);
+
+void
 xehp_emit_compute_walk(struct intel_bb *ibb,
 		       unsigned int x, unsigned int y,
 		       unsigned int width, unsigned int height,
 		       struct xehp_interface_descriptor_data *pidd,
 		       uint8_t color);
+
+void
+xe3p_emit_compute_walk2(struct intel_bb *ibb,
+			unsigned int x, unsigned int y,
+			unsigned int width, unsigned int height,
+			struct xe3p_interface_descriptor_data *pidd,
+			uint32_t max_threads,
+			struct xe3p_cw2_interrupt_data *intdata);
+
+void
+xe3p_emit_fill_compute_walk2(struct intel_bb *ibb,
+			     unsigned int buf_width, unsigned int buf_height,
+			     uint64_t buf_addr,
+			     unsigned int x, unsigned int y,
+			     unsigned int width, unsigned int height,
+			     struct xe3p_interface_descriptor_data *pidd,
+			     uint8_t color);
 
 #endif /* GPU_CMDS_H */

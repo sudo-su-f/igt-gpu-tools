@@ -44,7 +44,6 @@ typedef struct {
 	igt_crtc_t *crtc;
 	igt_pipe_crc_t *pipe_crc;
 	igt_crc_t crc_dprx;
-	enum pipe pipe_id;
 	int connector_type;
 	int supported_ilr[MAX_SUPPORTED_ILR];
 	int lane_count[4], link_rate[4], link_spread_spectrum[4];
@@ -81,7 +80,6 @@ static void set_all_output_pipe_to_none(data_t *data)
 
 static void test_init(data_t *data, igt_output_t *output)
 {
-	igt_display_t *display = &data->display;
 	igt_crtc_t *crtc;
 
 	igt_require(output->config.connector->count_modes >= 1);
@@ -89,17 +87,15 @@ static void test_init(data_t *data, igt_output_t *output)
 	set_all_output_pipe_to_none(data);
 
 	for_each_crtc(&data->display, crtc) {
-		if (igt_pipe_connector_valid(crtc->pipe, output)) {
-			data->pipe_id = crtc->pipe;
+		if (igt_crtc_connector_valid(crtc, output)) {
+			data->crtc = crtc;
 			break;
 		}
 	}
 
 	data->connector_type = output->config.connector->connector_type;
 
-	igt_require(data->pipe_id != PIPE_NONE);
-
-	data->crtc = igt_crtc_for_pipe(display, data->pipe_id);
+	igt_require(data->crtc != NULL);
 
 	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  AMDGPU_PIPE_CRC_SOURCE_DPRX);
@@ -207,10 +203,12 @@ static void test_flow(data_t *data, enum sub_test option)
 		}
 
 		/* states under /sys/kernel/debug/dri/0/eDP-1:
-		 * psr_capability.driver_support (drv_support_psr): yes
+		 * psr_capability.driver_support (drv_support_psr): yes/no
+		 * replay_capability.driver_support (drv_support_replay): yes/no
 		 * ilr_setting (intermediate link rates capabilities,
 		 * ilr_cap): yes/no
 		 * kernel driver disallow_edp_enter_psr (dis_psr): no
+		 * kernel driver disallow_edp_enter_repay (dis_replay): no
 		 */
 
 		/* Init only eDP */
@@ -220,9 +218,10 @@ static void test_flow(data_t *data, enum sub_test option)
 		 * DPMS on/off will not take effect until
 		 * next igt_display_commit_atomic.
 		 * eDP enter power saving mode within test_init
-		 * drv_support_psr: yes; ilr_cap: no; dis_psr: no
+		 * drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: no, dis_replay: no
 		 */
-
 		mode = igt_output_get_mode(output);
 		igt_assert(mode);
 
@@ -232,11 +231,16 @@ static void test_flow(data_t *data, enum sub_test option)
 				      0, &data->fb);
 		igt_plane_set_fb(data->primary, &data->fb);
 
-		/* drv_support_psr: yes; ilr_cap: no; dis_psr: no
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: no & dis_replay: no
 		 * commit stream. eDP exit power saving mode.
 		 */
 		igt_display_commit_atomic(&data->display, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-		/* drv_support_psr: yes; ilr_cap: yes; dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: yes;
+		 * dis_psr: no & dis_replay: no;
+		 */
 
 		/* igt_amd_output_has_ilr_setting only checks if debugfs
 		 * exist. ilr settings could be all 0s -- not supported.
@@ -251,23 +255,35 @@ static void test_flow(data_t *data, enum sub_test option)
 
 		igt_info("Testing on output: %s\n", output->name);
 
-		/* drv_support_psr: yes; ilr_cap: yes; dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: yes;
+		 * dis_psr: no & dis_replay: no
+		 */
 		kmstest_set_connector_dpms(data->drm_fd,
 			output->config.connector, DRM_MODE_DPMS_OFF);
 		/* eDP enter power saving mode.
-		 * drv_support_psr: yes; ilr_cap: no; dis_psr: no.
+		 * drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: no & dis_replay: no;
 		 */
 
-		/* Disable eDP PSR to avoid timeout when reading CRC */
+		/* Disable eDP PSR / Replay to avoid timeout when reading CRC */
 		igt_amd_disallow_edp_enter_psr(data->drm_fd, output->name, true);
-		/* drv_support_psr: yes; ilr_cap: no: dis_psr: yes */
+		igt_amd_disallow_edp_enter_replay(data->drm_fd, output->name, true);
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: yes & dis_replay: yes;
+		 */
 
 		/* eDP exit power saving mode and setup psr */
 		kmstest_set_connector_dpms(data->drm_fd,
 			output->config.connector, DRM_MODE_DPMS_ON);
-		/* drv_support_psr: no; ilr_cap: yes: dis_psr: yes
-		 * With dis_psr yes, drm kernel driver
-		 * disable psr, psr_en is set to no.
+		/* drv_support_replay: no & drv_support_psr: no;
+		 * ilr_cap: yes;
+		 * dis_psr: yes & dis_replay: yes;
+		 * With dis_psr yes and dis_replay yes,
+		 * drm kernel driver disable psr/replay,
+		 * psr_en & replay_en are set to no.
 		 */
 
 		/* Collect info of Reported Lane Count & ILR */
@@ -286,33 +302,54 @@ static void test_flow(data_t *data, enum sub_test option)
 				break;
 		}
 
-		/* drv_support_psr: no; ilr_cap: yes; dis_psr: yes */
+		/* drv_support_replay: no & drv_support_psr: no;
+		 * ilr_cap: yes;
+		 * dis_psr: yes & dis_replay: yes;
+		 */
 		kmstest_set_connector_dpms(data->drm_fd,
 			output->config.connector, DRM_MODE_DPMS_OFF);
 		/* eDP enter power saving mode.
-		 * drv_support_psr: no; ilr_cap: no; dis_psr: yes.
+		 * drv_support_replay: no & drv_support_psr: no;
+		 * ilr_cap: no;
+		 * dis_psr: yes & dis_replay: yes;
 		 */
 
-		/* Enable PSR after reading eDP Rx CRC */
+		/* Enable PSR / Replay after reading eDP Rx CRC */
 		igt_amd_disallow_edp_enter_psr(data->drm_fd, output->name, false);
-		/* drv_support_psr: no; ilr_cap: no: dis_psr: no */
+		igt_amd_disallow_edp_enter_replay(data->drm_fd, output->name, false);
+		/* drv_support_replay: no & drv_support_psr: no;
+		 * ilr_cap: no;
+		 * dis_psr: no & dis_replay: no;
+		 */
 
-		/* eDP exit power saving mode and setup psr */
+		/* eDP exit power saving mode and setup psr/replay */
 		kmstest_set_connector_dpms(data->drm_fd,
 			output->config.connector, DRM_MODE_DPMS_ON);
-		/* drv_support_psr: yes; ilr_cap: yes: dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: yes;
+		 * dis_psr: no & dis_replay: no;
+		 */
 
 		/* Reset preferred link settings*/
 		memset(data->supported_ilr, 0, sizeof(data->supported_ilr));
 		igt_amd_write_ilr_setting(data->drm_fd, output->name, 0, 0);
-		/* drv_support_psr: yes; ilr_cap: yes; dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: yes;
+		 * dis_psr: no, dis_replay: no;
+		 */
 
 		/* commit 0 stream. eDP enter power saving mode */
 		igt_remove_fb(data->drm_fd, &data->fb);
-		/* drv_support_psr: yes; ilr_cap: no; dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: no & dis_replay: no;
+		 */
 
 		test_fini(data);
-		/* drv_support_psr: yes; ilr_cap: no; dis_psr: no */
+		/* drv_support_replay: yes | drv_support_psr: yes;
+		 * ilr_cap: no;
+		 * dis_psr: no & dis_replay: no;
+		 */
 	}
 }
 

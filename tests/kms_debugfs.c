@@ -41,7 +41,9 @@ static void igt_display_all_on(igt_display_t *display)
 	for_each_crtc(display, crtc) {
 		igt_output_t *output;
 
-		for_each_valid_output_on_pipe(display, crtc->pipe, output) {
+		for_each_valid_output_on_crtc(display,
+					      crtc,
+					      output) {
 			igt_plane_t *primary;
 			drmModeModeInfo *mode;
 
@@ -56,12 +58,12 @@ static void igt_display_all_on(igt_display_t *display)
 					      mode->hdisplay, mode->vdisplay,
 					      DRM_FORMAT_XRGB8888,
 					      DRM_FORMAT_MOD_LINEAR,
-					      &fb[crtc->pipe]);
+					      &fb[crtc->crtc_index]);
 
 			/* Set a valid fb as some debugfs like to
 			 * inspect it on a active pipe
 			 */
-			igt_plane_set_fb(primary, &fb[crtc->pipe]);
+			igt_plane_set_fb(primary, &fb[crtc->crtc_index]);
 			break;
 		}
 	}
@@ -87,9 +89,10 @@ static void igt_display_all_off(igt_display_t *display)
 	for_each_connected_output(display, output)
 		igt_output_set_crtc(output, NULL);
 
-	for_each_crtc(display, crtc)
-		for_each_plane_on_pipe(display, crtc->pipe, plane)
+	for_each_crtc(display, crtc) {
+		for_each_plane_on_crtc(crtc, plane)
 			igt_plane_set_fb(plane, NULL);
+	}
 
 	igt_display_commit2(display, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 }

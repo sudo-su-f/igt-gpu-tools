@@ -18,6 +18,57 @@
 #include "xe_ioctl.h"
 #include "xe/xe_query.h"
 
+struct debugger_fd_entry {
+	int fd;
+	struct igt_list_head link;
+};
+
+static IGT_LIST_HEAD(active_debugger_fds);
+static pthread_mutex_t active_debugger_fds_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void register_debugger_fd(int fd)
+{
+	struct debugger_fd_entry *entry;
+
+	entry = calloc(1, sizeof(*entry));
+	igt_assert(entry);
+	entry->fd = fd;
+	IGT_INIT_LIST_HEAD(&entry->link);
+
+	pthread_mutex_lock(&active_debugger_fds_lock);
+	igt_list_add(&entry->link, &active_debugger_fds);
+	pthread_mutex_unlock(&active_debugger_fds_lock);
+}
+
+static void unregister_debugger_fd(int fd)
+{
+	struct debugger_fd_entry *entry, *tmp;
+
+	pthread_mutex_lock(&active_debugger_fds_lock);
+	igt_list_for_each_entry_safe(entry, tmp, &active_debugger_fds, link) {
+		if (entry->fd == fd) {
+			igt_list_del(&entry->link);
+			free(entry);
+			break;
+		}
+	}
+	pthread_mutex_unlock(&active_debugger_fds_lock);
+}
+
+static void close_all_debugger_fds(void)
+{
+	struct debugger_fd_entry *entry, *tmp;
+
+	pthread_mutex_lock(&active_debugger_fds_lock);
+	igt_list_for_each_entry_safe(entry, tmp, &active_debugger_fds, link) {
+		igt_debug("closing leftover debugger fd %d\n", entry->fd);
+		close(entry->fd);
+		igt_list_del(&entry->link);
+		free(entry);
+	}
+	pthread_mutex_unlock(&active_debugger_fds_lock);
+}
+
 struct event_trigger {
 	xe_eudebug_trigger_fn fn;
 	int type;
@@ -274,7 +325,6 @@ static int safe_pipe_read(int pipe[2], void *buf, int nbytes, int timeout_ms)
 
 		ret = poll(&r, 1, interval_ms);
 		if (!ret) {
-			igt_debug("poll: timeout\n");
 			catch_child_failure();
 			t += interval_ms;
 		} else if (ret == -1) {
@@ -394,22 +444,6 @@ static void client_signal(struct xe_eudebug_client *c,
 			  const uint64_t value)
 {
 	token_signal(c->p_out, token, value);
-}
-
-static int __xe_eudebug_connect(int fd, pid_t pid, uint32_t flags, uint64_t events)
-{
-	struct drm_xe_eudebug_connect param = {
-		.pid = pid,
-		.flags = flags,
-	};
-	int debugfd;
-
-	debugfd = igt_ioctl(fd, DRM_IOCTL_XE_EUDEBUG_CONNECT, &param);
-
-	if (debugfd < 0)
-		return -errno;
-
-	return debugfd;
 }
 
 static void event_log_write_to_fd(struct xe_eudebug_event_log *l, int fd)
@@ -905,14 +939,20 @@ static void event_log_sort(struct xe_eudebug_event_log *l)
  *
  * Returns: 0 if the debugger was successfully attached, -errno otherwise.
  */
-int xe_eudebug_connect(int fd, pid_t pid, uint32_t flags)
+static int xe_eudebug_connect(int fd, pid_t pid, uint32_t flags)
 {
-	int ret;
-	uint64_t events = 0; /* events filtering not supported yet! */
+	struct drm_xe_eudebug_connect param = {
+		.pid = pid,
+		.flags = flags,
+	};
+	int debugfd;
 
-	ret = __xe_eudebug_connect(fd, pid, flags, events);
+	debugfd = igt_ioctl(fd, DRM_IOCTL_XE_EUDEBUG_CONNECT, &param);
 
-	return ret;
+	if (debugfd < 0)
+		return -errno;
+
+	return debugfd;
 }
 
 /**
@@ -1266,6 +1306,41 @@ void xe_eudebug_debugger_destroy(struct xe_eudebug_debugger *d)
 	free(d);
 }
 
+static int __xe_eudebug_debugger_attach(struct xe_eudebug_debugger *d, pid_t pid)
+{
+	int ret;
+
+	igt_assert_eq(d->fd, -1);
+	igt_assert_eq(d->target_pid, 0);
+
+	ret = xe_eudebug_connect(d->master_fd, pid, 0);
+	if (ret < 0)
+		return ret;
+
+	d->fd = ret;
+	d->target_pid = pid;
+
+	register_debugger_fd(d->fd);
+
+	return 0;
+}
+
+/**
+ * xe_eudebug_debugger_reattach:
+ * @d: pointer to the debugger
+ * @pid: pid of the process to attach to
+ *
+ * Re-establishes debugger connection to a process. To be used only for
+ * reconnection scenarios where the debugger was previously attached using
+ * xe_eudebug_debugger_attach() and detached with xe_eudebug_debugger_detach().
+ *
+ * Returns: 0 if the debugger was successfully reattached, -errno otherwise.
+ */
+int xe_eudebug_debugger_reattach(struct xe_eudebug_debugger *d, pid_t pid)
+{
+	return  __xe_eudebug_debugger_attach(d, pid);
+}
+
 /**
  * xe_eudebug_debugger_attach:
  * @d: pointer to the debugger
@@ -1280,19 +1355,12 @@ int xe_eudebug_debugger_attach(struct xe_eudebug_debugger *d,
 {
 	int ret;
 
-	igt_assert_eq(d->fd, -1);
-	igt_assert_neq(c->pid, 0);
-	ret = xe_eudebug_connect(d->master_fd, c->pid, 0);
-
+	ret = __xe_eudebug_debugger_attach(d, c->pid);
 	if (ret < 0)
 		return ret;
 
-	d->fd = ret;
-	d->target_pid = c->pid;
 	d->p_client[0] = c->p_in[0];
 	d->p_client[1] = c->p_in[1];
-
-	igt_debug("debugger connected to %" PRIu64 "\n", d->target_pid);
 
 	return 0;
 }
@@ -1307,6 +1375,7 @@ int xe_eudebug_debugger_attach(struct xe_eudebug_debugger *d,
 void xe_eudebug_debugger_detach(struct xe_eudebug_debugger *d)
 {
 	igt_assert(d->target_pid);
+	unregister_debugger_fd(d->fd);
 	close(d->fd);
 	d->target_pid = 0;
 	d->fd = -1;
@@ -1829,6 +1898,35 @@ static void metadata_event(struct xe_eudebug_client *c, uint32_t flags,
 	xe_eudebug_event_log_write(c->log, (void *)&em);
 }
 
+#define EU_DEBUG_TOGGLE "device/enable_eudebug"
+
+static char *get_card_name(int fd, char *card_name, size_t len)
+{
+	char sysfs_path[PATH_MAX];
+	char link_target[PATH_MAX];
+	char *card_start;
+	ssize_t link_len;
+
+	if (!igt_sysfs_path(fd, sysfs_path, sizeof(sysfs_path)))
+		return NULL;
+
+	link_len = readlink(sysfs_path, link_target, sizeof(link_target) - 1);
+	if (link_len < 0)
+		return NULL;
+
+	link_target[link_len] = '\0';
+
+	card_start = strstr(link_target, "card");
+	if (!card_start)
+		return NULL;
+
+	snprintf(card_name, len, "%s", card_start);
+	card_start = strchr(card_name, '/');
+	if (card_start)
+		*card_start = '\0';
+
+	return card_name;
+}
 /**
  * __xe_eudebug_enable_getset
  * @fd: xe client
@@ -1838,13 +1936,12 @@ static void metadata_event(struct xe_eudebug_client *c, uint32_t flags,
  * Stores current eudebug feature state in @old if not NULL. Sets new eudebug
  * feature state to @new if not NULL. Asserts if both @old and @new are NULL.
  *
- * Returns: 0 on success, -1 on failure.
+ * Returns: 0 on success, -errno on failure.
  */
 int __xe_eudebug_enable_getset(int fd, bool *old, bool *new)
 {
-	static const char * const fname = "enable_eudebug";
 	int ret = 0;
-	int sysfs, device_fd;
+	int sysfs;
 	bool val_before;
 	struct stat st;
 
@@ -1853,15 +1950,10 @@ int __xe_eudebug_enable_getset(int fd, bool *old, bool *new)
 
 	sysfs = igt_sysfs_open(fd);
 	if (sysfs < 0)
-		return -1;
+		return -errno;
 
-	device_fd = openat(sysfs, "device", O_DIRECTORY | O_RDONLY);
-	close(sysfs);
-	if (device_fd < 0)
-		return -1;
-
-	if (!__igt_sysfs_get_boolean(device_fd, fname, &val_before)) {
-		ret = -1;
+	if (!__igt_sysfs_get_boolean(sysfs, EU_DEBUG_TOGGLE, &val_before)) {
+		ret = -errno;
 		goto out;
 	}
 
@@ -1871,14 +1963,14 @@ int __xe_eudebug_enable_getset(int fd, bool *old, bool *new)
 		*old = val_before;
 
 	if (new) {
-		if (__igt_sysfs_set_boolean(device_fd, fname, *new))
-			igt_assert_eq(igt_sysfs_get_boolean(device_fd, fname), *new);
+		if (__igt_sysfs_set_boolean(sysfs, EU_DEBUG_TOGGLE, *new))
+			igt_assert_eq(igt_sysfs_get_boolean(sysfs, EU_DEBUG_TOGGLE), *new);
 		else
-			ret = -1;
+			ret = -errno;
 	}
 
 out:
-	close(device_fd);
+	close(sysfs);
 
 	return ret;
 }
@@ -1896,10 +1988,39 @@ out:
  */
 bool xe_eudebug_enable(int fd, bool enable)
 {
+	char card_name[NAME_MAX];
 	bool old = false;
-	int ret = __xe_eudebug_enable_getset(fd, &old, &enable);
+	int ret = 0;
 
-	igt_skip_on(ret);
+	/* When disabling eudebug, close all active debugger sessions first. */
+	if (!enable)
+		close_all_debugger_fds();
+
+	/* 'struct drm_driver.postclose' runs asynchronously to 'close', wait for it to complete */
+	for (int i = 0; i < 10; ++i) {
+		ret = __xe_eudebug_enable_getset(fd, &old, &enable);
+
+		if (ret != -EBUSY)
+			break;
+
+		if (i < 9) {
+			igt_debug("xe_eudebug_enable: Failed (%d), retrying...\n", ret);
+			sleep(1);
+		}
+	}
+
+	if (ret == -ENOENT) {
+		if (get_card_name(fd, card_name, sizeof(card_name)))
+			igt_skip("'/sys/class/drm/%s/" EU_DEBUG_TOGGLE
+				 "' sysfs attribute not found, EU DEBUG not supported\n",
+				 card_name);
+		else
+			igt_skip("'" EU_DEBUG_TOGGLE
+				 "' sysfs attribute not found, EU DEBUG not supported\n");
+	}
+
+	igt_abort_on_f(ret, "xe_eudebug_enable: Failed to %s eudebug\n",
+		       enable ? "enable" : "disable");
 
 	return old;
 }

@@ -200,7 +200,13 @@ hdmi_inject_audio(int drm_fd, drmModeConnector *connector)
 	 * Test if we have /proc/asound/HDMI/eld#0.0 and is its contents are
 	 * valid.
 	 */
-	igt_assert(eld_has_igt());
+	if (!eld_has_igt()) {
+		igt_info("HDMI audio enabled but ELD not visible yet; retrying\n");
+		usleep(200 * 1000);
+
+		igt_assert_f(eld_has_igt(),
+			     "HDMI ELD missing after retry\n");
+	}
 
 	igt_remove_fb(drm_fd, &fb);
 

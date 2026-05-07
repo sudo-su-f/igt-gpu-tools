@@ -11,6 +11,8 @@
 #include "igt_kmod.h"
 #include "runnercomms.h"
 #include <unistd.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -651,13 +653,21 @@ static void leak(uint64_t alloc)
 	}
 }
 
+static sigjmp_buf sigbus_jmp;
+
+static void sigbus_handler(int sig, siginfo_t *si, void *ctx)
+{
+	siglongjmp(sigbus_jmp, 1);
+}
+
 static void gem_leak(int fd, uint64_t alloc)
 {
 	uint32_t handle = gem_create(fd, alloc);
 	void *buf;
 
 	buf = gem_mmap_offset__fixed(fd, handle, 0, PAGE_SIZE, PROT_WRITE);
-	memset(buf, 0, PAGE_SIZE);
+	if (!igt_debug_on_f(sigsetjmp(sigbus_jmp, 1), "PID %d: SIGBUS caught\n", getpid()))
+		memset(buf, 0, PAGE_SIZE);
 	munmap(buf, PAGE_SIZE);
 
 	gem_madvise(fd, handle, I915_MADV_DONTNEED);
@@ -707,7 +717,7 @@ static void test_smem_oom(int i915,
 		igt_get_total_swap_mb();
 	const unsigned int alloc = 256 * 1024 * 1024;
 	const unsigned int num_alloc = 1 + smem_size / (alloc >> 20);
-	struct igt_helper_process smem_proc = {};
+	struct igt_helper_process smem_loop[2] = {};
 	unsigned int n;
 	int lmem_err;
 
@@ -734,18 +744,45 @@ static void test_smem_oom(int i915,
 		drm_close_driver(fd);
 	}
 
-	/* smem memory hog process, respawn till the lmem process completes */
-	igt_fork_helper(&smem_proc) {
+	/* smem memory hog processes, respawn till the lmem process completes */
+	igt_fork_helper(&smem_loop[0]) {
 		while (!READ_ONCE(*lmem_done)) {
-			igt_fork(child, 1) {
+			struct igt_helper_process smem_proc = {};
+
+			igt_fork_helper(&smem_proc) {
 				for (int pass = 0; pass < num_alloc; pass++) {
 					if (READ_ONCE(*lmem_done))
 						break;
 					leak(alloc);
 				}
 			}
-			igt_fork(child, 1) {
+			/*
+			 * Wait for grand-child process to finish or be
+			 * killed by the oom killer, don't call
+			 * igt_waitchildren because of the noise
+			 */
+			igt_wait_helper(&smem_proc);
+		}
+	}
+	igt_fork_helper(&smem_loop[1]) {
+		while (!READ_ONCE(*lmem_done)) {
+			struct igt_helper_process smem_proc = {};
+
+			igt_fork_helper(&smem_proc) {
+				struct sigaction sa = {
+					.sa_sigaction = sigbus_handler,
+					.sa_flags = SA_SIGINFO | SA_NODEFER,
+				};
 				int fd = drm_reopen_driver(i915);
+
+				sigemptyset(&sa.sa_mask);
+
+				/*
+				 * This helper process is allowed to ignore
+				 * SIGBUS signals and continue, no need to
+				 * restore default SIGBUS handler ever.
+				 */
+				sigaction(SIGBUS, &sa, NULL);
 
 				for (int pass = 0; pass < num_alloc; pass++) {
 					if (READ_ONCE(*lmem_done))
@@ -754,13 +791,7 @@ static void test_smem_oom(int i915,
 				}
 				drm_close_driver(fd);
 			}
-			/*
-			 * Wait for grand-child processes to finish or be
-			 * killed by the oom killer, don't call
-			 * igt_waitchildren because of the noise
-			 */
-			for (n = 0; n < 2; n++)
-				wait(NULL);
+			igt_wait_helper(&smem_proc);
 		}
 	}
 
@@ -772,7 +803,8 @@ static void test_smem_oom(int i915,
 		(*lmem_done)++;
 	munmap(lmem_done, sizeof(*lmem_done));
 
-	igt_wait_helper(&smem_proc);
+	for (n = 0; n < 2; n++)
+		igt_wait_helper(&smem_loop[n]);
 
 	igt_assert_eq(lmem_err, 0);
 }

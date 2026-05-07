@@ -64,7 +64,7 @@ typedef struct _data data_t;
 
 struct _data {
 	int drm_fd;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	igt_display_t display;
 	igt_output_t *output;
 	drmModeResPtr res;
@@ -72,14 +72,6 @@ struct _data {
 	bool (*adjust_mode)(data_t *data, drmModeModeInfoPtr mode);
 };
 
-static bool has_scaling_mode_prop(data_t *data)
-{
-	return kmstest_get_property(data->drm_fd,
-				    data->output->id,
-				    DRM_MODE_OBJECT_CONNECTOR,
-				    "scaling mode",
-				    NULL, NULL, NULL);
-}
 static bool
 can_bigjoiner(data_t *data)
 {
@@ -126,18 +118,15 @@ adjust_mode_clock_too_high(data_t *data, drmModeModeInfoPtr mode)
 {
 	int max_dotclock = data->max_dotclock;
 
-	igt_require(max_dotclock != 0);
-
 	/*
-	 * FIXME When we have a fixed mode, the kernel will ignore
-	 * the user timings apart from hdisplay/vdisplay. Should
-	 * fix the kernel to at least make sure the requested
-	 * refresh rate as specified by the user timings will
-	 * roughly match the user will get. For now skip the
-	 * test on  any connector with a fixed mode.
+	 * If max_dotclock is unavailable (e.g., non-Intel platforms),
+	 * use -1 as an invalid clock value. This will be converted to
+	 * UINT_MAX, which clearly exceeds any reasonable hardware limit.
 	 */
-	if (has_scaling_mode_prop(data))
-		return false;
+	if (max_dotclock == 0) {
+		mode->clock = -1;
+		return true;
+	}
 
 	/*
 	 * Newer platforms can support modes higher than the maximum dot clock
@@ -255,7 +244,6 @@ adjust_mode_overflow_vrefresh(data_t *data, drmModeModeInfoPtr mode)
 static void
 test_output(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	igt_output_t *output = data->output;
 	drmModeModeInfo mode;
 	struct igt_fb fb;
@@ -278,7 +266,7 @@ test_output(data_t *data)
 
 	kmstest_unset_all_crtcs(data->drm_fd, data->res);
 
-	crtc_id = igt_crtc_for_pipe(display, data->pipe)->crtc_id;
+	crtc_id = data->crtc->crtc_id;
 
 	ret = drmModeSetCrtc(data->drm_fd, crtc_id,
 			     fb.fb_id, 0, 0,
@@ -370,7 +358,7 @@ int igt_main()
 					      igt_crtc_name(crtc),
 					      igt_output_name(output)) {
 					data.output = output;
-					data.pipe = crtc->pipe;
+					data.crtc = crtc;
 					data.adjust_mode = subtests[i].adjust_mode;
 					test_output(&data);
 				}

@@ -31,7 +31,7 @@ IGT_TEST_DESCRIPTION(
 "such as context flipping.");
 
 typedef struct {
-	int pipe;
+	igt_crtc_t *crtc;
 	int drm_fd;
 	int nv_crc_dir;
 	igt_display_t display;
@@ -105,7 +105,6 @@ static void destroy_crc_colors(data_t *data, struct color_fb *colors, size_t len
  */
 static void test_ctx_flip_detection(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	struct color_fb colors[] = {
 		HEX_COLOR(0xFF, 0x00, 0x18),
 		HEX_COLOR(0xFF, 0xA5, 0x2C),
@@ -123,7 +122,7 @@ static void test_ctx_flip_detection(data_t *data)
 	int start = -1, frame, start_color = -1, i;
 	bool found_skip = false;
 
-	pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+	pipe_crc = igt_crtc_crc_new(data->crtc,
 				    IGT_PIPE_CRC_SOURCE_AUTO);
 
 	create_crc_colors(data, colors, n_colors, pipe_crc);
@@ -222,7 +221,6 @@ static void test_ctx_flip_detection(data_t *data)
  */
 static void test_ctx_flip_skip_current_frame(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	struct color_fb colors[] = {
 		{ .r = 1.0, .g = 0.0, .b = 0.0 },
 		{ .r = 0.0, .g = 1.0, .b = 0.0 },
@@ -235,7 +233,7 @@ static void test_ctx_flip_skip_current_frame(data_t *data)
 	const int n_colors = ARRAY_SIZE(colors);
 	const int n_crcs = 30;
 
-	pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+	pipe_crc = igt_crtc_crc_new(data->crtc,
 				    IGT_PIPE_CRC_SOURCE_AUTO);
 	create_crc_colors(data, colors, n_colors, pipe_crc);
 
@@ -265,11 +263,10 @@ static void test_ctx_flip_skip_current_frame(data_t *data)
 
 static void test_ctx_flip_threshold_reset_after_capture(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	igt_pipe_crc_t *pipe_crc;
 	uint32_t value = 0;
 
-	pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+	pipe_crc = igt_crtc_crc_new(data->crtc,
 				    IGT_PIPE_CRC_SOURCE_AUTO);
 
 	set_crc_flip_threshold(data, 5);
@@ -285,8 +282,7 @@ static void test_ctx_flip_threshold_reset_after_capture(data_t *data)
 
 static void test_source(data_t *data, const char *source)
 {
-	igt_display_t *display = &data->display;
-	igt_pipe_crc_t *pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+	igt_pipe_crc_t *pipe_crc = igt_crtc_crc_new(data->crtc,
 						    source);
 	igt_crc_t *crcs;
 
@@ -301,9 +297,18 @@ static void test_source(data_t *data, const char *source)
 	free(crcs);
 }
 
+static void test_source_outp_complete(data_t *data)
+{
+	test_source(data, "outp-complete");
+}
+
+static void test_source_rg(data_t *data)
+{
+	test_source(data, "rg");
+}
+
 static void test_source_outp_inactive(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	struct color_fb colors[] = {
 		{ .r = 1.0, .g = 0.0, .b = 0.0 },
 		{ .r = 0.0, .g = 1.0, .b = 0.0 },
@@ -311,7 +316,7 @@ static void test_source_outp_inactive(data_t *data)
 	igt_pipe_crc_t *pipe_crc;
 	const int n_colors = ARRAY_SIZE(colors);
 
-	pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe),
+	pipe_crc = igt_crtc_crc_new(data->crtc,
 				    "outp-inactive");
 	create_crc_colors(data, colors, n_colors, pipe_crc);
 
@@ -322,13 +327,63 @@ static void test_source_outp_inactive(data_t *data)
 	destroy_crc_colors(data, colors, n_colors);
 }
 
+static void setup_test(data_t *data)
+{
+	int dir;
+
+	igt_display_require_output_on_crtc(data->crtc);
+
+	/* Disable the output from the previous iteration of pipe tests, if there is
+	 * one
+	 */
+	if (data->output) {
+		igt_output_set_crtc(data->output, NULL);
+		igt_display_commit(&data->display);
+	}
+
+	data->output = igt_get_single_output_for_crtc(data->crtc);
+	data->mode = igt_output_get_mode(data->output);
+
+	/* None of these tests need to perform modesets, just page flips. So running
+	 * display setup here is fine
+	 */
+	igt_output_set_crtc(data->output,
+			    data->crtc);
+	data->primary = igt_output_get_plane(data->output, 0);
+	igt_create_color_fb(data->drm_fd,
+			    data->mode->hdisplay,
+			    data->mode->vdisplay,
+			    DRM_FORMAT_XRGB8888,
+			    DRM_FORMAT_MOD_LINEAR,
+			    0.0, 0.0, 0.0,
+			    &data->default_fb);
+	igt_plane_set_fb(data->primary, &data->default_fb);
+	igt_display_commit(&data->display);
+
+	dir = igt_crtc_debugfs_dir(data->crtc);
+	igt_require_fd(dir);
+	data->nv_crc_dir = openat(dir, "nv_crc", O_DIRECTORY);
+	close(dir);
+	igt_require_fd(data->nv_crc_dir);
+}
+
+static void cleanup_test(data_t *data)
+{
+	igt_remove_fb(data->drm_fd, &data->default_fb);
+	close(data->nv_crc_dir);
+}
+
+static void run_test(data_t *data, void (*test)(data_t *data))
+{
+	setup_test(data);
+	test(data);
+	cleanup_test(data);
+}
+
 data_t data = {0};
 
-#define pipe_test(name) igt_subtest_f("pipe-%s-" name, kmstest_pipe_name(pipe))
 int igt_main()
 {
-	int pipe;
-
 	igt_fixture() {
 		data.drm_fd = drm_open_driver_master(DRIVER_ANY);
 		igt_require_nouveau(data.drm_fd);
@@ -340,84 +395,58 @@ int igt_main()
 		igt_display_reset(&data.display);
 	}
 
-	for_each_pipe_static(pipe) {
-		igt_fixture() {
-			int dir;
+	/* We don't need to test this on every pipe, but the setup is the same */
+	igt_describe("Make sure that the CRC notifier context flip threshold "
+		     "is reset to its default value after a single capture.");
+	igt_subtest("ctx-flip-threshold-reset-after-capture") {
+		data.crtc = igt_first_crtc(&data.display);
 
-			data.pipe = pipe;
-			igt_display_require_output_on_pipe(&data.display, pipe);
+		run_test(&data, test_ctx_flip_threshold_reset_after_capture);
+	}
 
-			/* Disable the output from the previous iteration of pipe tests, if there is
-			 * one
-			 */
-			if (data.output) {
-				igt_output_set_crtc(data.output, NULL);
-				igt_display_commit(&data.display);
-			}
-
-			data.output = igt_get_single_output_for_pipe(&data.display, pipe);
-			data.mode = igt_output_get_mode(data.output);
-
-			/* None of these tests need to perform modesets, just page flips. So running
-			 * display setup here is fine
-			 */
-			igt_output_set_crtc(data.output,
-					    igt_crtc_for_pipe(data.output->display, pipe));
-			data.primary = igt_output_get_plane(data.output, 0);
-			igt_create_color_fb(data.drm_fd,
-					    data.mode->hdisplay,
-					    data.mode->vdisplay,
-					    DRM_FORMAT_XRGB8888,
-					    DRM_FORMAT_MOD_LINEAR,
-					    0.0, 0.0, 0.0,
-					    &data.default_fb);
-			igt_plane_set_fb(data.primary, &data.default_fb);
-			igt_display_commit(&data.display);
-
-			dir = igt_debugfs_crtc_dir(data.drm_fd, pipe, O_DIRECTORY);
-			igt_require_fd(dir);
-			data.nv_crc_dir = openat(dir, "nv_crc", O_DIRECTORY);
-			close(dir);
-			igt_require_fd(data.nv_crc_dir);
+	igt_describe("Make sure the association between each CRC and its "
+		     "respective frame index is not broken when the driver "
+		     "performs a notifier context flip.");
+	igt_subtest("ctx-flip-detection") {
+		for_each_crtc(&data.display, data.crtc) {
+			igt_dynamic_f("pipe-%s", igt_crtc_name(data.crtc))
+				run_test(&data, test_ctx_flip_detection);
 		}
+	}
 
-		/* We don't need to test this on every pipe, but the setup is the same */
-		if (pipe == PIPE_A) {
-			igt_describe("Make sure that the CRC notifier context flip threshold "
-				     "is reset to its default value after a single capture.");
-			igt_subtest("ctx-flip-threshold-reset-after-capture")
-				test_ctx_flip_threshold_reset_after_capture(&data);
+	igt_describe("Make sure that igt_pipe_crc_get_current() works even "
+		     "when the CRC for the current frame index is lost.");
+	igt_subtest("ctx-flip-skip-current-frame") {
+		for_each_crtc(&data.display, data.crtc) {
+			igt_dynamic_f("pipe-%s", igt_crtc_name(data.crtc))
+				run_test(&data, test_ctx_flip_skip_current_frame);
 		}
+	}
 
-		igt_describe("Make sure the association between each CRC and its "
-			     "respective frame index is not broken when the driver "
-			     "performs a notifier context flip.");
-		pipe_test("ctx-flip-detection")
-			test_ctx_flip_detection(&data);
+	igt_describe("Check that basic CRC readback using the outp-complete "
+		     "source works.");
+	igt_subtest("source-outp-complete") {
+		for_each_crtc(&data.display, data.crtc) {
+			igt_dynamic_f("pipe-%s", igt_crtc_name(data.crtc))
+				run_test(&data, test_source_outp_complete);
+		}
+	}
 
-		igt_describe("Make sure that igt_pipe_crc_get_current() works even "
-			     "when the CRC for the current frame index is lost.");
-		pipe_test("ctx-flip-skip-current-frame")
-			test_ctx_flip_skip_current_frame(&data);
+	igt_describe("Check that basic CRC readback using the rg source "
+		     "works.");
+	igt_subtest("source-rg") {
+		for_each_crtc(&data.display, data.crtc) {
+			igt_dynamic_f("pipe-%s", igt_crtc_name(data.crtc))
+				run_test(&data, test_source_rg);
+		}
+	}
 
-		igt_describe("Check that basic CRC readback using the outp-complete "
-			     "source works.");
-		pipe_test("source-outp-complete")
-			test_source(&data, "outp-complete");
-
-		igt_describe("Check that basic CRC readback using the rg source "
-			     "works.");
-		pipe_test("source-rg")
-			test_source(&data, "rg");
-
-		igt_describe("Make sure that the outp-inactive source is actually "
-			     "capturing the inactive raster.");
-		pipe_test("source-outp-inactive")
-			test_source_outp_inactive(&data);
-
-		igt_fixture() {
-			igt_remove_fb(data.drm_fd, &data.default_fb);
-			close(data.nv_crc_dir);
+	igt_describe("Make sure that the outp-inactive source is actually "
+		     "capturing the inactive raster.");
+	igt_subtest("source-outp-inactive") {
+		for_each_crtc(&data.display, data.crtc) {
+			igt_dynamic_f("pipe-%s", igt_crtc_name(data.crtc))
+				run_test(&data, test_source_outp_inactive);
 		}
 	}
 

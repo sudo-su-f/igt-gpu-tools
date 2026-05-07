@@ -40,6 +40,7 @@
 #include "xe_oa_metrics_lnl.h"
 #include "xe_oa_metrics_bmg.h"
 #include "xe_oa_metrics_ptl.h"
+#include "xe_oa_metrics_cri.h"
 
 static struct intel_xe_perf_logical_counter_group *
 intel_xe_perf_logical_counter_group_new(struct intel_xe_perf *perf,
@@ -303,6 +304,8 @@ intel_xe_perf_for_devinfo(uint32_t device_id,
 		intel_xe_perf_load_metrics_bmg(perf);
 	} else if (devinfo->is_pantherlake) {
 		intel_xe_perf_load_metrics_ptl(perf);
+	} else if (devinfo->is_crescentisland) {
+		intel_xe_perf_load_metrics_cri(perf);
 	} else if (intel_graphics_ver(device_id) >= IP_VER(20, 0)) {
 		intel_xe_perf_load_metrics_lnl(perf);
 	} else {
@@ -872,6 +875,30 @@ void intel_xe_perf_accumulate_reports(struct intel_xe_perf_accumulator *acc,
 
 		break;
 
+	case XE_OAM_FORMAT_MPEC8u64_B8_C8:
+		/* 64 bit timestamp */
+		if (perf->devinfo.oa_timestamp_shift >= 0)
+			deltas[idx++] += (end64[1] - start64[1]) << perf->devinfo.oa_timestamp_shift;
+		else
+			deltas[idx++] += (end64[1] - start64[1]) >> (-perf->devinfo.oa_timestamp_shift);
+
+		/* 64 bit clock */
+		deltas[idx++] += end64[3] - start64[3];
+
+		/* 8x 64bit MPEC counters */
+		for (i = 0; i < 8; i++)
+			deltas[idx++] += end64[4 + i] - start64[4 + i];
+
+		/* 8x 32bit B counters */
+		for (i = 0; i < 8; i++)
+			accumulate_uint32(start + 24 + i, end + 24 + i, deltas + idx++);
+
+		/* 8x 32bit C counters */
+		for (i = 0; i < 8; i++)
+			accumulate_uint32(start + 32 + i, end + 32 + i, deltas + idx++);
+
+		break;
+
 	case XE_OA_FORMAT_PEC64u64:
 		/* 64 bit timestamp */
 		if (perf->devinfo.oa_timestamp_shift >= 0)
@@ -907,6 +934,7 @@ uint64_t intel_xe_perf_read_record_timestamp(const struct intel_xe_perf *perf,
                ts = report32[1];
                break;
 
+       case XE_OAM_FORMAT_MPEC8u64_B8_C8:
        case XE_OAM_FORMAT_MPEC8u32_B8_C8:
        case XE_OA_FORMAT_PEC64u64:
                ts = report64[1];
@@ -938,6 +966,7 @@ uint64_t intel_xe_perf_read_record_timestamp_raw(const struct intel_xe_perf *per
                ts = report32[1];
                break;
 
+       case XE_OAM_FORMAT_MPEC8u64_B8_C8:
        case XE_OAM_FORMAT_MPEC8u32_B8_C8:
        case XE_OA_FORMAT_PEC64u64:
                ts = report64[1];

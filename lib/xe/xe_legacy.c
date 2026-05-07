@@ -13,6 +13,8 @@
 
 /* Batch buffer element count, in number of dwords(u32) */
 #define BATCH_DW_COUNT			16
+#define SECONDARY_QUEUE			(0x1 << 15)
+#define MULTI_QUEUE			(0x1 << 14)
 #define COMPRESSION			(0x1 << 13)
 #define SYSTEM				(0x1 << 12)
 #define LONG_SPIN_REUSE_QUEUE		(0x1 << 11)
@@ -70,9 +72,13 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 			xe_spin_nsec_to_ticks(fd, 0, THREE_SEC) : 0,
 	};
 	int i, b;
+	int hang_position = flags & SECONDARY_QUEUE ? 1 : 0;
 	int extra_execs = (flags & LONG_SPIN_REUSE_QUEUE) ? n_exec_queues : 0;
 
 	igt_assert_lte(n_exec_queues, MAX_N_EXECQUEUES);
+
+	igt_assert_f(!(flags & SECONDARY_QUEUE) || (flags & MULTI_QUEUE),
+		     "SECONDARY_QUEUE requires MULTI_QUEUE to be set");
 
 	if (flags & COMPRESSION)
 		igt_require(intel_gen(intel_get_drm_devid(fd)) >= 20);
@@ -101,7 +107,20 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	data = xe_bo_map(fd, bo, bo_size);
 
 	for (i = 0; i < n_exec_queues; i++) {
-		exec_queues[i] = xe_exec_queue_create(fd, vm, eci, 0);
+		if (flags & MULTI_QUEUE) {
+			struct drm_xe_ext_set_property multi_queue = {
+				.base.next_extension = 0,
+				.base.name = DRM_XE_EXEC_QUEUE_EXTENSION_SET_PROPERTY,
+				.property = DRM_XE_EXEC_QUEUE_SET_PROPERTY_MULTI_GROUP,
+			};
+
+			uint64_t ext = to_user_pointer(&multi_queue);
+
+			multi_queue.value = i ? exec_queues[0] : DRM_XE_MULTI_GROUP_CREATE;
+			exec_queues[i] = xe_exec_queue_create(fd, vm, eci, ext);
+		} else {
+			exec_queues[i] = xe_exec_queue_create(fd, vm, eci, 0);
+		}
 		syncobjs[i] = syncobj_create(fd, 0);
 	}
 
@@ -123,17 +142,22 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	}
 
 	for (i = 0; i < n_execs; i++) {
-		u64 base_addr = (!use_capture_mode && (flags & CAT_ERROR) && !i)
-			? (addr + bo_size * 128) : addr;
+		u64 base_addr = (!use_capture_mode && flags & CAT_ERROR &&
+				 i == hang_position) ?
+				(addr + bo_size * 128) : addr;
 		u64 batch_offset = (char *)&data[i].batch - (char *)data;
 		u64 batch_addr = base_addr + batch_offset;
 		u64 spin_offset = (char *)&data[i].spin - (char *)data;
 		u64 sdi_offset = (char *)&data[i].data - (char *)data;
 		u64 sdi_addr = base_addr + sdi_offset;
 		u64 exec_addr;
-		int e = i % n_exec_queues;
+		int err, e = i % n_exec_queues;
 
-		if (!i || flags & CANCEL ||
+		/*
+		 * For cat fault on a secondary queue the fault will
+		 * be on the spinner.
+		 */
+		if (i == hang_position || flags & CANCEL ||
 		    (flags & LONG_SPIN && i < n_exec_queues)) {
 			spin_opts.addr = base_addr + spin_offset;
 			xe_spin_init(&data[i].spin, &spin_opts);
@@ -160,10 +184,17 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 		if (e != i)
 			syncobj_reset(fd, &syncobjs[e], 1);
 
-		xe_exec(fd, &exec);
+		/*
+		 * Secondary queues are reset when the primary queue
+		 * is reset. The submission can race here and it is
+		 * expected for those to fail submission if the primary
+		 * reset has already happened.
+		 */
+		err = __xe_exec(fd, &exec);
+		igt_assert(!err || ((flags & MULTI_QUEUE) && err == -ECANCELED));
 
-		if (!i && !(flags & CAT_ERROR) && !use_capture_mode &&
-		    !(flags & COMPRESSION))
+		if (i == hang_position && !(flags & CAT_ERROR) &&
+		    !use_capture_mode && !(flags & COMPRESSION))
 			xe_spin_wait_started(&data[i].spin);
 	}
 
@@ -181,8 +212,27 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 		return;
 	}
 
-	for (i = 0; i < n_exec_queues && n_execs; i++)
-		igt_assert(syncobj_wait(fd, &syncobjs[i], 1, INT64_MAX, 0, NULL));
+	for (i = 0; i < n_exec_queues && n_execs; i++) {
+		/*
+		 * Expectation here is that on reset, submissions will
+		 * still satisfy the syncobj_wait.
+		 */
+		int err = syncobj_wait_err(fd, &syncobjs[i], 1, INT64_MAX, 0);
+
+		/*
+		 * Currently any time GuC resets a queue which is part of a
+		 * multi queue queue group submitted by the KMD, the KMD
+		 * will tear down the entire group. This means we don't know
+		 * whether a particular queue submitted prior to the hanging
+		 * queue will complete or not. So we have to check all possible
+		 * return values here.
+		 *
+		 * In the event we get an -ECANCELED at the exec above and the
+		 * syncobj was not installed, we expect this to return -EINVAL
+		 * here instead.
+		 */
+		igt_assert(!err || ((flags & MULTI_QUEUE) && err == -EINVAL));
+	}
 
 	igt_assert(syncobj_wait(fd, &sync[0].handle, 1, INT64_MAX, 0, NULL));
 
@@ -225,9 +275,19 @@ xe_legacy_test_mode(int fd, struct drm_xe_engine_class_instance *eci,
 	igt_assert(syncobj_wait(fd, &sync[0].handle, 1, INT64_MAX, 0, NULL));
 
 	if (!use_capture_mode && !(flags & (GT_RESET | CANCEL | COMPRESSION))) {
-		for (i = flags & LONG_SPIN ? n_exec_queues : 1;
-		     i < n_execs + extra_execs; i++)
+		for (i = flags & LONG_SPIN ? n_exec_queues : 0;
+		     i < n_execs + extra_execs; i++) {
+			/*
+			 * For multi-queue there is no guarantee which
+			 * queue will be scheduled first as they are all
+			 * submitted at the same priority in this test.
+			 * So we can't guarantee any data integrity here.
+			 */
+			if (i == hang_position || flags & MULTI_QUEUE)
+				continue;
+
 			igt_assert_eq(data[i].data, 0xc0ffee);
+		}
 	}
 
 	syncobj_destroy(fd, sync[0].handle);

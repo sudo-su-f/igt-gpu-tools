@@ -68,4 +68,12 @@ xehp_gpgpu_fillfunc(int i915,
 		    unsigned int width, unsigned int height,
 		    uint8_t color);
 
+void
+xe3p_gpgpu_fillfunc(int fd,
+		    struct intel_buf *dst,
+		    unsigned int x, unsigned int y,
+		    unsigned int width, unsigned int height,
+		    uint8_t color);
+
+
 #endif /* GPGPU_FILL_H */

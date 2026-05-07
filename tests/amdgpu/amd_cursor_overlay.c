@@ -77,7 +77,6 @@ typedef struct data {
 	igt_fb_t quarter_fb;
 	igt_fb_t scale_fb;
 	igt_fb_t cfb;
-	enum pipe pipe_id;
 	int drm_fd;
 	int available_overlay_planes;
 	uint64_t max_curw;
@@ -85,12 +84,12 @@ typedef struct data {
 } data_t;
 
 /* Retuns the number of available overlay planes. */
-static int get_overlay_planes_count(igt_display_t *display, enum pipe pipe)
+static int get_overlay_planes_count(igt_display_t *display, igt_crtc_t *crtc)
 {
 	int count = 0;
 	igt_plane_t *plane;
 
-	for_each_plane_on_pipe(display, pipe, plane)
+	for_each_plane_on_crtc(crtc, plane)
 		if (plane->type == DRM_PLANE_TYPE_OVERLAY)
 			count++;
 
@@ -131,16 +130,13 @@ static bool can_support_all_overlay_planes(int available_overlay_planes, int fam
 }
 
 /* Common test setup. */
-static void test_init(data_t *data, enum pipe pipe_id, igt_output_t *output,
+static void test_init(data_t *data, igt_crtc_t *crtc, igt_output_t *output,
 		      unsigned int flags, int available_overlay_planes)
 {
-	igt_display_t *display = &data->display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe_id);
 	int i;
 
-	data->pipe_id = crtc->pipe;
+	data->crtc = crtc;
 	data->available_overlay_planes = available_overlay_planes;
-	data->crtc = &data->display.crtcs[data->pipe_id];
 	data->output = output;
 	data->mode = igt_output_get_mode(data->output);
 	data->primary = igt_crtc_get_plane_type(data->crtc,
@@ -160,10 +156,10 @@ static void test_init(data_t *data, enum pipe pipe_id, igt_output_t *output,
 									  i);
 
 	igt_info("Using (pipe %s + %s) to run the subtest.\n",
-		 kmstest_pipe_name(data->pipe_id), igt_output_name(data->output));
+		 igt_crtc_name(data->crtc), igt_output_name(data->output));
 
 	igt_require_pipe_crc(data->drm_fd);
-	data->pipe_crc = igt_crtc_crc_new(igt_crtc_for_pipe(display, data->pipe_id),
+	data->pipe_crc = igt_crtc_crc_new(data->crtc,
 					  IGT_PIPE_CRC_SOURCE_AUTO);
 }
 
@@ -202,7 +198,6 @@ static void test_cleanup(data_t *data)
 
 static void test_cursor_pos(data_t *data, int x, int y, unsigned int flags)
 {
-	igt_display_t *display = &data->display;
 	igt_crc_t ref_crc, test_crc;
 	cairo_t *cr;
 	igt_fb_t *rgb_fb = &data->rgb_fb;
@@ -298,7 +293,7 @@ static void test_cursor_pos(data_t *data, int x, int y, unsigned int flags)
 	 * synchronized to the same frame on AMD hw.
 	 */
 	if(is_amdgpu_device(data->drm_fd))
-		igt_wait_for_vblank_count(igt_crtc_for_pipe(display, data->pipe_id),
+		igt_wait_for_vblank_count(data->crtc,
 					  1);
 
 	/* Record the new CRC. */
@@ -346,7 +341,6 @@ static void test_cursor_spots(data_t *data, int size, unsigned int flags)
 
 static void test_cursor(data_t *data, int size, unsigned int flags, unsigned int scaling_factor)
 {
-	igt_display_t *display = &data->display;
 	int sw, sh;
 
 	igt_skip_on(size > data->max_curw || size > data->max_curh);
@@ -395,7 +389,7 @@ static void test_cursor(data_t *data, int size, unsigned int flags, unsigned int
 	}
 
 	igt_output_set_crtc(data->output,
-		igt_crtc_for_pipe(display, data->pipe_id));
+		data->crtc);
 
 	/* Run the test for different cursor spots. */
 	test_cursor_spots(data, size, flags);
@@ -491,7 +485,7 @@ int igt_main()
 					crtc);
 
 				available_overlay_planes = get_overlay_planes_count(display,
-										    crtc->pipe);
+										    crtc);
 
 				/* Require at least one overlay plane. */
 				if (!available_overlay_planes)
@@ -507,7 +501,9 @@ int igt_main()
 					igt_skip("%s subtest requires 3 overlay planes with a supported DCN.\n",
 						 tests[i].name);
 
-				test_init(&data, crtc->pipe, output,
+				test_init(&data,
+					  crtc,
+					  output,
 					  tests[i].flags,
 					  available_overlay_planes);
 

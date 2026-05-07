@@ -1,0 +1,11 @@
+igt@xe_pm@s2idle-d3cold-basic-exec
+igt@xe_pm@s3-d3cold-basic-exec
+igt@xe_pm@s4-d3cold-basic-exec
+igt@xe_pm@d3cold-basic
+igt@xe_pm@d3cold-basic-exec
+igt@xe_pm@d3cold-i2c
+igt@xe_pm@d3cold-multiple-execs
+igt@xe_pm@d3cold-mmap-system
+igt@xe_pm@d3cold-mmap-vram
+igt@xe_pm@d3cold-mocs
+igt@xe_pm@vram-d3cold-threshold

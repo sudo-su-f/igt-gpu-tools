@@ -25,7 +25,6 @@ struct data {
 	igt_output_t *output;
 	igt_crtc_t *crtc;
 	drmModeModeInfoPtr mode;
-	enum pipe pipe_id;
 	int fd;
 };
 
@@ -48,8 +47,7 @@ static void test_init(struct data *data)
 	igt_display_t *display = &data->display;
 
 	/* It doesn't matter which pipe we choose on amdpgu. */
-	data->pipe_id = PIPE_A;
-	data->crtc = igt_crtc_for_pipe(display, data->pipe_id);
+	data->crtc = igt_first_crtc(&data->display);
 
 	igt_display_reset(display);
 
@@ -112,7 +110,6 @@ static void run_test_odmc(struct data *data, enum odmc_mode m, const drmModeMode
 	struct igt_fb buffer;
 	char buf[256];
 	int ret, seg, fd;
-	int i = 0;
 
 	test_init(data);
 
@@ -123,8 +120,7 @@ static void run_test_odmc(struct data *data, enum odmc_mode m, const drmModeMode
 			    DRM_FORMAT_MOD_LINEAR, 1.f, 0.f, 0.f,
 			    &buffer);
 
-	igt_output_set_crtc(data->output,
-			    igt_crtc_for_pipe(display, i));
+	igt_output_set_crtc(data->output, data->crtc);
 
 	igt_plane_set_fb(data->primary, &buffer);
 

@@ -227,7 +227,7 @@ typedef struct {
 	cairo_t *cr;
 	uint32_t screen_changes;
 	int cur_x, cur_y;
-	enum pipe pipe;
+	igt_crtc_t *crtc;
 	enum psr_mode psr_mode;
 	enum {
 		FEATURE_NONE  = 0,
@@ -396,7 +396,6 @@ static void plane_move_setup_square(data_t *data, igt_fb_t *fb, uint32_t h,
 
 static void prepare(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	igt_output_t *output = data->output;
 	igt_plane_t *primary, *sprite = NULL, *cursor = NULL;
 	int fb_w, fb_h, x, y, view_w, view_h;
@@ -414,7 +413,7 @@ static void prepare(data_t *data)
 	}
 
 	igt_output_set_crtc(output,
-		            igt_crtc_for_pipe(display, data->pipe));
+		            data->crtc);
 
 	if (data->big_fb_test) {
 		fb_w = data->big_fb_width;
@@ -958,9 +957,8 @@ static void run(data_t *data)
 	igt_assert(psr_wait_entry(data->debugfs_fd, data->psr_mode, data->output));
 
 	if (data->fbc_flag == true && data->op_fbc_mode == FBC_ENABLED)
-		igt_assert_f(intel_fbc_wait_until_enabled(data->drm_fd,
-							  data->pipe),
-							  "FBC still disabled\n");
+		igt_assert_f(intel_fbc_wait_until_enabled(data->crtc),
+			     "FBC still disabled\n");
 
 	if (is_et_check_needed(data))
 		igt_assert_f(early_transport_check(data->debugfs_fd),
@@ -1041,11 +1039,11 @@ static void cleanup(data_t *data)
 
 static bool sel_fetch_pipe_combo_valid(data_t *data)
 {
-	if (data->devid < 14 && !IS_ALDERLAKE_P(data->devid) && data->pipe != PIPE_A)
+	if (data->devid < 14 && !IS_ALDERLAKE_P(data->devid) && data->crtc->pipe != PIPE_A)
 		return false;
 
 	if (data->output->config.connector->connector_type == DRM_MODE_CONNECTOR_eDP &&
-	    data->pipe != PIPE_A && data->pipe != PIPE_B)
+	    data->crtc->pipe != PIPE_A && data->crtc->pipe != PIPE_B)
 		return false;
 
 	return true;
@@ -1054,7 +1052,6 @@ static bool sel_fetch_pipe_combo_valid(data_t *data)
 static bool
 pipe_output_combo_valid(data_t *data)
 {
-	igt_display_t *display = &data->display;
 	bool ret = psr_sink_support(data->drm_fd, data->debugfs_fd,
 				    data->psr_mode, data->output);
 	if (!ret)
@@ -1067,7 +1064,7 @@ pipe_output_combo_valid(data_t *data)
 	igt_display_reset(&data->display);
 
 	igt_output_set_crtc(data->output,
-			    igt_crtc_for_pipe(display, data->pipe));
+			    data->crtc);
 	if (!intel_pipe_output_combo_valid(&data->display))
 		ret = false;
 	igt_output_set_crtc(data->output, NULL);
@@ -1080,7 +1077,7 @@ static void run_dynamic_test_damage_areas(data_t data, int i, int coexist_featur
 	for (int j = FEATURE_NONE; j < FEATURE_COUNT; j++) {
 		if (j != FEATURE_NONE && !(coexist_features[i] & j))
 			continue;
-		igt_dynamic_f("pipe-%s-%s%s", kmstest_pipe_name(data.pipe),
+		igt_dynamic_f("pipe-%s-%s%s", igt_crtc_name(data.crtc),
 			      igt_output_name(data.output), coexist_feature_str(j)) {
 			data.coexist_feature = j;
 			for (int k = 1; k <= MAX_DAMAGE_AREAS; k++) {
@@ -1098,7 +1095,7 @@ static void run_dynamic_test(data_t data, int i, int coexist_features[])
 	for (int j = FEATURE_NONE; j < FEATURE_COUNT; j++) {
 		if (j != FEATURE_NONE && !(coexist_features[i] & j))
 			continue;
-		igt_dynamic_f("pipe-%s-%s%s", kmstest_pipe_name(data.pipe),
+		igt_dynamic_f("pipe-%s-%s%s", igt_crtc_name(data.crtc),
 			      igt_output_name(data.output), coexist_feature_str(j)) {
 			data.coexist_feature = j;
 			prepare(&data);
@@ -1113,7 +1110,7 @@ static void run_plane_move(data_t data, int i, int coexist_features[])
 	for (int j = FEATURE_NONE; j < FEATURE_COUNT; j++) {
 		if (j != FEATURE_NONE && !(coexist_features[i] & j))
 			continue;
-		igt_dynamic_f("pipe-%s-%s%s", kmstest_pipe_name(data.pipe),
+		igt_dynamic_f("pipe-%s-%s%s", igt_crtc_name(data.crtc),
 			      igt_output_name(data.output), coexist_feature_str(j)) {
 			data.test_plane_id = DRM_PLANE_TYPE_OVERLAY;
 			data.coexist_feature = j;
@@ -1132,7 +1129,7 @@ static void run_plane_update_continuous(data_t data, int i, int coexist_features
 	for (int j = FEATURE_NONE; j < FEATURE_COUNT; j++) {
 		if (j != FEATURE_NONE && !(coexist_features[i] & j))
 			continue;
-		igt_dynamic_f("pipe-%s-%s%s", kmstest_pipe_name(data.pipe),
+		igt_dynamic_f("pipe-%s-%s%s", igt_crtc_name(data.crtc),
 			      igt_output_name(data.output), coexist_feature_str(j)) {
 			data.damage_area_count = 1;
 			if (data.op_fbc_mode == FBC_ENABLED)
@@ -1157,8 +1154,8 @@ int igt_main()
 	data_t data = {};
 	igt_output_t *outputs[IGT_MAX_PIPES * IGT_MAX_PIPES];
 	int i, y, z;
-	int pipes[IGT_MAX_PIPES * IGT_MAX_PIPES];
-	int n_pipes = 0;
+	igt_crtc_t *crtcs[IGT_MAX_PIPES * IGT_MAX_PIPES];
+	int n_crtcs = 0;
 	int coexist_features[IGT_MAX_PIPES * IGT_MAX_PIPES];
 	const char *append_fbc_subtest[2] = {
 		"",
@@ -1171,8 +1168,7 @@ int igt_main()
 		"pr-"
 	};
 	int psr_status[] = {PSR_MODE_2, PR_MODE_SEL_FETCH};
-	bool fbc_chipset_support;
-	int disp_ver;
+	bool fbc_chipset_support = false;
 
 	igt_fixture() {
 		drmModeResPtr res;
@@ -1184,8 +1180,6 @@ int igt_main()
 		display_init(&data);
 
 		data.devid = intel_get_drm_devid(data.drm_fd);
-		disp_ver = intel_display_ver(data.devid);
-		fbc_chipset_support = intel_fbc_supported_on_chipset(data.drm_fd, data.pipe);
 
 		data.damage_area_count = MAX_DAMAGE_AREAS;
 		data.primary_format = DRM_FORMAT_XRGB8888;
@@ -1198,7 +1192,11 @@ int igt_main()
 
 		for_each_crtc_with_valid_output(&data.display, crtc,
 						data.output) {
-			data.pipe = crtc->pipe;
+			data.crtc = crtc;
+
+			if (intel_fbc_supported(data.crtc))
+				fbc_chipset_support = true;
+
 			for (i = 0; i < ARRAY_SIZE(psr_status); i++) {
 				data.psr_mode = psr_status[i];
 				output_supports_pr_psr2_sel_fetch = pipe_output_combo_valid(&data);
@@ -1209,14 +1207,14 @@ int igt_main()
 			if (!output_supports_pr_psr2_sel_fetch)
 				continue;
 
-			pipes[n_pipes] = data.pipe;
-			outputs[n_pipes] = data.output;
+			crtcs[n_crtcs] = crtc;
+			outputs[n_crtcs] = data.output;
 
-			coexist_features[n_pipes] = 0;
+			coexist_features[n_crtcs] = 0;
 			if (is_dsc_supported_by_sink(data.drm_fd, data.output))
-				coexist_features[n_pipes] |= FEATURE_DSC;
+				coexist_features[n_crtcs] |= FEATURE_DSC;
 
-			n_pipes++;
+			n_crtcs++;
 			pr_psr2_sel_fetch_supported = true;
 		}
 		igt_require_f(pr_psr2_sel_fetch_supported,
@@ -1233,7 +1231,7 @@ int igt_main()
 			data.op_fbc_mode = fbc_status[y];
 			data.psr_mode = psr_status[z];
 			data.fbc_flag = fbc_chipset_support &&
-					intel_fbc_supported_for_psr_mode(disp_ver, data.psr_mode);
+					intel_fbc_supported_for_psr_mode(&data.display, data.psr_mode);
 
 			/* Verify primary plane selective fetch */
 			igt_describe("Test that selective fetch works on primary plane");
@@ -1241,8 +1239,8 @@ int igt_main()
 						   append_fbc_subtest[y],
 						   append_psr_subtest[z],
 						   op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1262,8 +1260,8 @@ int igt_main()
 							   append_fbc_subtest[y],
 							   append_psr_subtest[z],
 							   op_str(data.op)) {
-					for (i = 0; i < n_pipes; i++) {
-						data.pipe = pipes[i];
+					for (i = 0; i < n_crtcs; i++) {
+						data.crtc = crtcs[i];
 						data.output = outputs[i];
 
 						if (!pipe_output_combo_valid(&data))
@@ -1283,8 +1281,8 @@ int igt_main()
 						   append_fbc_subtest[y],
 						   append_psr_subtest[z],
 						   op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1300,8 +1298,8 @@ int igt_main()
 			igt_describe("Test that selective fetch works on cursor plane");
 			igt_subtest_with_dynamic_f("%s%scursor-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1317,8 +1315,8 @@ int igt_main()
 				     "moving cursor plane (no update)");
 			igt_subtest_with_dynamic_f("%s%scursor-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1334,8 +1332,8 @@ int igt_main()
 				     "plane exceeding partially visible area (no update)");
 			igt_subtest_with_dynamic_f("%s%scursor-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1351,8 +1349,8 @@ int igt_main()
 				     "exceeding fully visible area (no update)");
 			igt_subtest_with_dynamic_f("%s%scursor-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1369,8 +1367,8 @@ int igt_main()
 			igt_describe("Test that selective fetch works on moving overlay plane");
 			igt_subtest_with_dynamic_f("%s%s%s-sf-dmg-area", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1385,8 +1383,8 @@ int igt_main()
 				     "plane (no update)");
 			igt_subtest_with_dynamic_f("%s%soverlay-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1402,8 +1400,8 @@ int igt_main()
 				     "plane partially exceeding visible area (no update)");
 			igt_subtest_with_dynamic_f("%s%soverlay-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1419,8 +1417,8 @@ int igt_main()
 				     "fully exceeding visible area (no update)");
 			igt_subtest_with_dynamic_f("%s%soverlay-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1437,8 +1435,8 @@ int igt_main()
 				     "with blended overlay plane");
 			igt_subtest_with_dynamic_f("%s%s%s-sf-dmg-area", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))
@@ -1457,8 +1455,8 @@ int igt_main()
 			igt_describe("Test that selective fetch works on overlay plane");
 			igt_subtest_with_dynamic_f("%s%soverlay-%s-sf", append_fbc_subtest[y],
 						   append_psr_subtest[z], op_str(data.op)) {
-				for (i = 0; i < n_pipes; i++) {
-					data.pipe = pipes[i];
+				for (i = 0; i < n_crtcs; i++) {
+					data.crtc = crtcs[i];
 					data.output = outputs[i];
 
 					if (!pipe_output_combo_valid(&data))

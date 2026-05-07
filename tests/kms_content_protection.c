@@ -107,10 +107,15 @@
 
 IGT_TEST_DESCRIPTION("Test content protection (HDCP)");
 
+struct hdcp_test_fbs {
+	struct igt_fb red;
+	struct igt_fb green;
+};
+
 struct data {
 	int drm_fd;
 	igt_display_t display;
-	struct igt_fb red, green;
+	struct hdcp_test_fbs fbs[IGT_MAX_PIPES];
 	unsigned int cp_tests;
 	struct udev_monitor *uevent_monitor;
 	bool is_force_hdcp14;
@@ -127,6 +132,7 @@ struct data {
 #define CP_UNDESIRED				0
 #define CP_DESIRED				1
 #define CP_ENABLED				2
+#define MAX_HDCP_OUTPUTS			10
 
 /*
  * HDCP_CONTENT_TYPE_0 can be handled on both HDCP1.4 and HDCP2.2. Where as
@@ -257,7 +263,7 @@ commit_display_and_wait_for_flip(enum igt_commit_style commit_style)
 	}
 }
 
-static void modeset_with_fb(const enum pipe pipe, igt_output_t *output,
+static void modeset_with_fb(igt_output_t *output, igt_crtc_t *crtc,
 			    enum igt_commit_style commit_style)
 {
 	igt_display_t *display = &data.display;
@@ -267,18 +273,19 @@ static void modeset_with_fb(const enum pipe pipe, igt_output_t *output,
 	mode = igt_output_get_mode(output);
 
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
-	igt_plane_set_fb(primary, &data.red);
-	igt_fb_set_size(&data.red, primary, mode->hdisplay, mode->vdisplay);
+	igt_plane_set_fb(primary, &data.fbs[crtc->crtc_index].red);
+	igt_fb_set_size(&data.fbs[crtc->crtc_index].red, primary, mode->hdisplay, mode->vdisplay);
 
 	igt_display_commit2(display, commit_style);
 
-	igt_plane_set_fb(primary, &data.green);
+	igt_plane_set_fb(primary, &data.fbs[crtc->crtc_index].green);
 
 	/* Wait for Flip completion before starting the HDCP authentication */
 	commit_display_and_wait_for_flip(commit_style);
 }
 
-static bool test_cp_enable(igt_output_t *output, enum igt_commit_style commit_style,
+static bool test_cp_enable(igt_output_t *output, igt_crtc_t *crtc,
+			   enum igt_commit_style commit_style,
 			   int content_type, bool type_change)
 {
 	igt_display_t *display = &data.display;
@@ -301,7 +308,7 @@ static bool test_cp_enable(igt_output_t *output, enum igt_commit_style commit_st
 	ret = wait_for_prop_value(output, CP_ENABLED,
 				  KERNEL_AUTH_TIME_ALLOWED_MSEC);
 	if (ret) {
-		igt_plane_set_fb(primary, &data.green);
+		igt_plane_set_fb(primary, &data.fbs[crtc->crtc_index].green);
 		igt_display_commit2(display, commit_style);
 	}
 
@@ -314,13 +321,15 @@ static void test_mst_cp_disable(igt_output_t *hdcp_mst_output[],
 {
 	igt_display_t *display = &data.display;
 	igt_plane_t *primary;
+	igt_crtc_t *crtc;
 	bool ret;
 	int count;
 	u64 val;
 
 	for (count = 0; count < valid_outputs; count++) {
+		crtc = igt_output_get_driving_crtc(hdcp_mst_output[count]);
 		primary = igt_output_get_plane_type(hdcp_mst_output[count], DRM_PLANE_TYPE_PRIMARY);
-		igt_plane_set_fb(primary, &data.red);
+		igt_plane_set_fb(primary, &data.fbs[crtc->crtc_index].red);
 		igt_output_set_prop_value(hdcp_mst_output[count], IGT_CONNECTOR_CONTENT_PROTECTION,
 					  CP_UNDESIRED);
 	}
@@ -338,7 +347,8 @@ static void test_mst_cp_disable(igt_output_t *hdcp_mst_output[],
 	igt_assert_f(ret, "Content Protection not cleared on all MST outputs\n");
 }
 
-static void test_cp_disable(igt_output_t *output, enum igt_commit_style commit_style)
+static void test_cp_disable(igt_output_t *output, igt_crtc_t *crtc,
+			    enum igt_commit_style commit_style)
 {
 	igt_display_t *display = &data.display;
 	igt_plane_t *primary;
@@ -352,7 +362,7 @@ static void test_cp_disable(igt_output_t *output, enum igt_commit_style commit_s
 	 */
 	igt_output_set_prop_value(output, IGT_CONNECTOR_CONTENT_PROTECTION,
 				  CP_UNDESIRED);
-	igt_plane_set_fb(primary, &data.red);
+	igt_plane_set_fb(primary, &data.fbs[crtc->crtc_index].red);
 	igt_display_commit2(display, commit_style);
 
 	/* Wait for HDCP to be disabled, before crtc off */
@@ -361,7 +371,7 @@ static void test_cp_disable(igt_output_t *output, enum igt_commit_style commit_s
 	igt_assert_f(ret, "Content Protection not cleared\n");
 }
 
-static void test_cp_enable_with_retry(igt_output_t *output,
+static void test_cp_enable_with_retry(igt_output_t *output, igt_crtc_t *crtc,
 				      enum igt_commit_style commit_style,
 				      int retry, int content_type,
 				      bool expect_failure,
@@ -372,16 +382,16 @@ static void test_cp_enable_with_retry(igt_output_t *output,
 
 	do {
 		if (!type_change || retry_orig != retry)
-			test_cp_disable(output, commit_style);
+			test_cp_disable(output, crtc, commit_style);
 
-		ret = test_cp_enable(output, commit_style, content_type, type_change);
+		ret = test_cp_enable(output, crtc, commit_style, content_type, type_change);
 
 		if (!ret && --retry)
 			igt_debug("Retry (%d/2) ...\n", 3 - retry);
 	} while (retry && !ret);
 
 	if (!ret)
-		test_cp_disable(output, commit_style);
+		test_cp_disable(output, crtc, commit_style);
 
 	if (expect_failure)
 		igt_assert_f(!ret,
@@ -394,10 +404,10 @@ static void test_cp_enable_with_retry(igt_output_t *output,
 static bool igt_crtc_is_free(igt_crtc_t *crtc)
 {
 	igt_display_t *display = crtc->display;
-	int i;
+	igt_output_t *output;
 
-	for (i = 0; i < display->n_outputs; i++)
-		if (igt_output_get_driving_crtc(&display->outputs[i]) == crtc)
+	for_each_output(display, output)
+		if (igt_output_get_driving_crtc(output) == crtc)
 			return false;
 
 	return true;
@@ -444,24 +454,23 @@ static bool write_srm_as_fw(const __u8 *srm, int len)
 }
 
 static void test_content_protection_on_output(igt_output_t *output,
-					      enum pipe pipe,
+					      igt_crtc_t *crtc,
 					      enum igt_commit_style commit_style,
 					      int content_type)
 {
 	igt_display_t *display = &data.display;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, pipe);
 	bool ret;
 
-	test_cp_enable_with_retry(output, commit_style, 3, content_type, false,
+	test_cp_enable_with_retry(output, crtc, commit_style, 3, content_type, false,
 				  false);
 
 	if (data.cp_tests & CP_TYPE_CHANGE) {
 		/* Type 1 -> Type 0 */
-		test_cp_enable_with_retry(output, commit_style, 3,
+		test_cp_enable_with_retry(output, crtc, commit_style, 3,
 					  HDCP_CONTENT_TYPE_0, false,
 					  true);
 		/* Type 0 -> Type 1 */
-		test_cp_enable_with_retry(output, commit_style, 3,
+		test_cp_enable_with_retry(output, crtc, commit_style, 3,
 					  content_type, false,
 					  true);
 	}
@@ -471,14 +480,14 @@ static void test_content_protection_on_output(igt_output_t *output,
 			     "mei_hdcp unload failed");
 
 		/* Expected to fail */
-		test_cp_enable_with_retry(output, commit_style, 3,
+		test_cp_enable_with_retry(output, crtc, commit_style, 3,
 					  content_type, true, false);
 
 		igt_assert_f(!igt_kmod_load("mei_hdcp", NULL),
 			     "mei_hdcp load failed");
 
 		/* Expected to pass */
-		test_cp_enable_with_retry(output, commit_style, 3,
+		test_cp_enable_with_retry(output, crtc, commit_style, 3,
 					  content_type, false, false);
 	}
 
@@ -497,7 +506,7 @@ static void test_content_protection_on_output(igt_output_t *output,
 		ret = wait_for_prop_value(output, CP_ENABLED,
 					  KERNEL_AUTH_TIME_ALLOWED_MSEC);
 		if (!ret)
-			test_cp_enable_with_retry(output, commit_style, 2,
+			test_cp_enable_with_retry(output, crtc, commit_style, 2,
 						  content_type, false,
 						  false);
 	}
@@ -508,7 +517,7 @@ static void test_content_protection_on_output(igt_output_t *output,
 		ret = wait_for_prop_value(output, CP_ENABLED,
 					  KERNEL_AUTH_TIME_ALLOWED_MSEC);
 		if (!ret)
-			test_cp_enable_with_retry(output, commit_style, 2,
+			test_cp_enable_with_retry(output, crtc, commit_style, 2,
 						  content_type, false,
 						  false);
 	}
@@ -578,21 +587,24 @@ static bool sink_hdcp2_capable(igt_output_t *output)
 	return strstr(buf, "HDCP2.2");
 }
 
-static void prepare_modeset_on_mst_output(igt_output_t *output, bool is_enabled)
+static void prepare_modeset_on_mst_output(igt_output_t *output, igt_crtc_t *crtc, bool is_enabled)
 {
 	drmModeModeInfo *mode;
 	igt_plane_t *primary;
 	int width, height;
+	struct igt_fb *fb;
 
 	mode = igt_output_get_mode(output);
 
 	width = mode->hdisplay;
 	height = mode->vdisplay;
 
+	fb = is_enabled ? &data.fbs[crtc->crtc_index].green : &data.fbs[crtc->crtc_index].red;
+
 	primary = igt_output_get_plane_type(output, DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, NULL);
-	igt_plane_set_fb(primary, is_enabled ? &data.green : &data.red);
-	igt_fb_set_size(is_enabled ? &data.green : &data.red, primary, width, height);
+	igt_plane_set_fb(primary, fb);
+	igt_fb_set_size(fb, primary, width, height);
 	igt_plane_set_size(primary, width, height);
 }
 
@@ -664,11 +676,11 @@ static void reset_i915_force_hdcp14(igt_output_t *output)
 }
 
 static void
-test_fini(igt_output_t *output, enum igt_commit_style commit_style)
+test_fini(igt_output_t *output, igt_crtc_t *crtc, enum igt_commit_style commit_style)
 {
 	igt_plane_t *primary;
 
-	test_cp_disable(output, commit_style);
+	test_cp_disable(output, crtc, commit_style);
 	primary = igt_output_get_plane_type(output,
 					    DRM_PLANE_TYPE_PRIMARY);
 	igt_plane_set_fb(primary, NULL);
@@ -708,53 +720,77 @@ static bool is_output_hdcp_test_exempt(igt_output_t *output)
 	return igt_is_panel_blocked(sink_name, hdcp_blocklist, ARRAY_SIZE(hdcp_blocklist));
 }
 
+static int get_hdcp_outputs(igt_display_t *display, int content_type,
+			    igt_output_t **hdcp_outputs)
+{
+	igt_output_t *output;
+	int count = 0;
+
+	for_each_connected_output(display, output) {
+		if (!output_hdcp_capable(output, content_type))
+			continue;
+
+		if (is_output_hdcp_test_exempt(output)) {
+			igt_info("Skipping HDCP test on %s, as the panel is blocklisted\n",
+				 output->name);
+			continue;
+		}
+
+
+		if (count < MAX_HDCP_OUTPUTS)
+			hdcp_outputs[count++] = output;
+	}
+
+	return count;
+}
+
 static void
 test_content_protection(enum igt_commit_style commit_style, int content_type)
 {
 	igt_display_t *display = &data.display;
 	igt_output_t *output;
+	igt_output_t *hdcp_outputs[MAX_HDCP_OUTPUTS];
 	igt_crtc_t *crtc;
+	int hdcp_panel_count;
+	int i;
 
 	if (data.cp_tests & CP_MEI_RELOAD)
 		igt_require_f(igt_kmod_is_loaded("mei_hdcp"),
 			      "mei_hdcp module is not loaded\n");
+
+	hdcp_panel_count = get_hdcp_outputs(display, content_type, hdcp_outputs);
+	igt_skip_on_f(hdcp_panel_count == 0, "No connected output with HDCP support found\n");
 
 	if (data.cp_tests & CP_UEVENT) {
 		data.uevent_monitor = igt_watch_uevents();
 		igt_flush_uevents(data.uevent_monitor);
 	}
 
-	for_each_connected_output(display, output) {
-		for_each_crtc(display, crtc) {
-			if (!output_hdcp_capable(output, content_type))
-				continue;
-			if (is_output_hdcp_test_exempt(output)) {
-				igt_info("Skipping HDCP test on %s, as the panel is blocklisted\n",
-					  output->name);
-				continue;
-			}
+	for (i = 0; i < hdcp_panel_count; i++) {
+		output = hdcp_outputs[i];
 
+		for_each_crtc(display, crtc) {
 			igt_display_reset(display);
 			igt_output_set_crtc(output,
 				            crtc);
 			if (!intel_pipe_output_combo_valid(display))
 				continue;
 
-			modeset_with_fb(crtc->pipe, output, commit_style);
+			modeset_with_fb(output, crtc, commit_style);
 			if (data.is_force_hdcp14)
 				set_i915_force_hdcp14(output);
 
 			igt_dynamic_f("pipe-%s-%s", igt_crtc_name(crtc),
 				      output->name)
 				test_content_protection_on_output(output,
-								  crtc->pipe,
+								  crtc,
 								  commit_style,
 								  content_type);
 
 			if (data.is_force_hdcp14)
 				reset_i915_force_hdcp14(output);
 
-			test_fini(output, commit_style);
+			test_fini(output, crtc, commit_style);
 			/*
 			 * Testing a output with a pipe is enough for HDCP
 			 * testing. No ROI in testing the connector with other
@@ -847,8 +883,11 @@ test_mst_cp_enable_with_retry(igt_output_t *hdcp_mst_output[], int valid_outputs
 		if (!ret || retries)
 			igt_debug("Retry %d/3\n", 3 - retries);
 
-		for (i = 0; i < valid_outputs; i++)
-			prepare_modeset_on_mst_output(hdcp_mst_output[i], ret);
+		for (i = 0; i < valid_outputs; i++) {
+			igt_crtc_t *crtc = igt_output_get_driving_crtc(hdcp_mst_output[i]);
+
+			prepare_modeset_on_mst_output(hdcp_mst_output[i], crtc, ret);
+		}
 
 		igt_display_commit2(display, COMMIT_ATOMIC);
 	} while (retries && !ret);
@@ -868,14 +907,11 @@ test_content_protection_mst(int content_type)
 	igt_output_t *output;
 	int valid_outputs = 0, dp_mst_outputs = 0, ret, count, max_pipe = 0, i;
 	igt_crtc_t *crtc;
-	enum pipe pipe;
 	bool pipe_found;
 	igt_output_t *hdcp_mst_output[IGT_MAX_PIPES];
 
 	for_each_crtc(display, crtc)
 		max_pipe++;
-
-	pipe = PIPE_A;
 
 	for_each_connected_output(display, output) {
 		if (!output_is_dp_mst(output, dp_mst_outputs))
@@ -884,7 +920,7 @@ test_content_protection_mst(int content_type)
 		pipe_found = false;
 		for_each_crtc(display, crtc) {
 			if (igt_crtc_is_free(crtc) &&
-			    igt_pipe_connector_valid(crtc->pipe, output)) {
+			    igt_crtc_connector_valid(crtc, output)) {
 				pipe_found = true;
 				break;
 			}
@@ -892,9 +928,8 @@ test_content_protection_mst(int content_type)
 
 		igt_assert_f(pipe_found, "No valid pipe found for %s\n", output->name);
 
-		igt_output_set_crtc(output,
-				    igt_crtc_for_pipe(display, pipe));
-		prepare_modeset_on_mst_output(output, false);
+		igt_output_set_crtc(output, crtc);
+		prepare_modeset_on_mst_output(output, crtc, false);
 		dp_mst_outputs++;
 		if (output_hdcp_capable(output, content_type))
 			hdcp_mst_output[valid_outputs++] = output;
@@ -910,9 +945,33 @@ test_content_protection_mst(int content_type)
 		bool found = igt_override_all_active_output_modes_to_fit_bw(display);
 		igt_require_f(found, "No valid mode combo found for MST modeset\n");
 
-		for (count = 0; count < valid_outputs; count++)
-			prepare_modeset_on_mst_output(hdcp_mst_output[count], false);
+		/* Detach planes before removing framebuffers */
+		for (count = 0; count < valid_outputs; count++) {
+			crtc = igt_output_get_driving_crtc(hdcp_mst_output[count]);
+			prepare_modeset_on_mst_output(hdcp_mst_output[count], crtc, false);
+		}
+		igt_display_commit2(display, COMMIT_ATOMIC);
 
+		/* Need to re-prepare after mode override */
+		for (count = 0; count < valid_outputs; count++) {
+			drmModeModeInfo *mode;
+
+			crtc = igt_output_get_driving_crtc(hdcp_mst_output[count]);
+
+			igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].red);
+			igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].green);
+
+			mode = igt_output_get_mode(hdcp_mst_output[count]);
+
+			igt_create_color_fb(data.drm_fd, mode->hdisplay, mode->vdisplay,
+					    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
+					    1.f, 0.f, 0.f, &data.fbs[crtc->crtc_index].red);
+			igt_create_color_fb(data.drm_fd, mode->hdisplay, mode->vdisplay,
+					    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
+					    0.f, 1.f, 0.f, &data.fbs[crtc->crtc_index].green);
+
+			prepare_modeset_on_mst_output(hdcp_mst_output[count], crtc, false);
+		}
 		ret = igt_display_try_commit2(display, COMMIT_ATOMIC);
 		igt_require_f(ret == 0, "Commit failure during MST modeset\n");
 	}
@@ -938,8 +997,9 @@ test_content_protection_mst(int content_type)
 	/*
 	 * Verify if CP is still enabled on other outputs by disabling CP on the first output.
 	 */
+	crtc = igt_output_get_driving_crtc(hdcp_mst_output[0]);
 	igt_debug("CP Prop being UNDESIRED on %s\n", hdcp_mst_output[0]->name);
-	test_cp_disable(hdcp_mst_output[0], COMMIT_ATOMIC);
+	test_cp_disable(hdcp_mst_output[0], crtc, COMMIT_ATOMIC);
 
 	/* CP is expected to be still enabled on other outputs*/
 	for (i = 1; i < valid_outputs; i++) {
@@ -950,6 +1010,19 @@ test_content_protection_mst(int content_type)
 
 	if (data.cp_tests & CP_LIC)
 		test_cp_lic_on_mst(hdcp_mst_output, valid_outputs, 1);
+
+	/* Detach planes before removing framebuffers */
+	for (count = 0; count < valid_outputs; count++) {
+		crtc = igt_output_get_driving_crtc(hdcp_mst_output[count]);
+		prepare_modeset_on_mst_output(hdcp_mst_output[count], crtc, false);
+	}
+	igt_display_commit2(display, COMMIT_ATOMIC);
+
+	for (count = 0; count < valid_outputs; count++) {
+		crtc = igt_output_get_driving_crtc(hdcp_mst_output[count]);
+		igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].red);
+		igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].green);
+	}
 }
 
 
@@ -957,6 +1030,7 @@ static void test_content_protection_cleanup(void)
 {
 	igt_display_t *display = &data.display;
 	igt_output_t *output;
+	igt_crtc_t *crtc;
 	uint64_t val;
 
 	for_each_connected_output(display, output) {
@@ -969,33 +1043,52 @@ static void test_content_protection_cleanup(void)
 			continue;
 
 		igt_info("CP Prop being UNDESIRED on %s\n", output->name);
-		test_cp_disable(output, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
+		crtc = igt_output_get_driving_crtc(output);
+		test_cp_disable(output, crtc, display->is_atomic ? COMMIT_ATOMIC : COMMIT_LEGACY);
 	}
-
-	igt_remove_fb(data.drm_fd, &data.red);
-	igt_remove_fb(data.drm_fd, &data.green);
 }
 
 static void create_fbs(void)
 {
-	uint16_t width = 0, height = 0;
 	drmModeModeInfo *mode;
 	igt_output_t *output;
+	igt_crtc_t *crtc;
 
+	/* Create framebuffers for each connected output's pipe */
 	for_each_connected_output(&data.display, output) {
 		mode = igt_output_get_mode(output);
 		igt_assert(mode);
 
-		width = max(width, mode->hdisplay);
-		height = max(height, mode->vdisplay);
-	}
+		/* Find a valid crtc for this output */
+		for_each_crtc(&data.display, crtc) {
+			if (!igt_crtc_connector_valid(crtc, output))
+				continue;
 
-	igt_create_color_fb(data.drm_fd, width, height,
-			    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
-			    1.f, 0.f, 0.f, &data.red);
-	igt_create_color_fb(data.drm_fd, width, height,
-			    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
-			    0.f, 1.f, 0.f, &data.green);
+			/* Skip if already created for this crtc */
+			if (data.fbs[crtc->crtc_index].red.fb_id)
+				continue;
+
+			igt_create_color_fb(data.drm_fd, mode->hdisplay, mode->vdisplay,
+					    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
+					    1.f, 0.f, 0.f, &data.fbs[crtc->crtc_index].red);
+			igt_create_color_fb(data.drm_fd, mode->hdisplay, mode->vdisplay,
+					    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR,
+					    0.f, 1.f, 0.f, &data.fbs[crtc->crtc_index].green);
+			break;
+		}
+	}
+}
+
+static void remove_fbs(void)
+{
+	igt_crtc_t *crtc;
+
+	for_each_crtc(&data.display, crtc) {
+		if (data.fbs[crtc->crtc_index].red.fb_id)
+			igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].red);
+		if (data.fbs[crtc->crtc_index].green.fb_id)
+			igt_remove_fb(data.drm_fd, &data.fbs[crtc->crtc_index].green);
+	}
 }
 
 static const struct {
@@ -1221,6 +1314,7 @@ int igt_main()
 
 	igt_fixture() {
 		test_content_protection_cleanup();
+		remove_fbs();
 		igt_display_fini(&data.display);
 		drm_close_driver(data.drm_fd);
 	}

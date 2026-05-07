@@ -72,9 +72,9 @@ static bool output_is_dp_mst(data_t *data, igt_output_t *output, int i)
 	return true;
 }
 
-static void run_extendedmode_basic(data_t *data,
-				   enum pipe pipe1, igt_output_t *output1,
-				   enum pipe pipe2, igt_output_t *output2)
+static void run_extendedmode_basic(data_t *data, igt_crtc_t *crtc1,
+				   igt_output_t *output1, igt_crtc_t *crtc2,
+				   igt_output_t *output2)
 {
 	struct igt_fb fb, fbs[2];
 	drmModeModeInfo *mode[2];
@@ -88,18 +88,18 @@ static void run_extendedmode_basic(data_t *data,
 	igt_display_reset(display);
 
 	igt_output_set_crtc(output1,
-			    igt_crtc_for_pipe(display, pipe1));
+			    crtc1);
 	igt_output_set_crtc(output2,
-			    igt_crtc_for_pipe(display, pipe2));
+			    crtc2);
 
 	mode[0] = igt_output_get_mode(output1);
 	mode[1] = igt_output_get_mode(output2);
 
 	igt_assert_f(igt_fit_modes_in_bw(display), "Unable to fit modes in bw\n");
 
-	pipe_crc[0] = igt_crtc_crc_new(igt_crtc_for_pipe(display, pipe1),
+	pipe_crc[0] = igt_crtc_crc_new(crtc1,
 				       IGT_PIPE_CRC_SOURCE_AUTO);
-	pipe_crc[1] = igt_crtc_crc_new(igt_crtc_for_pipe(display, pipe2),
+	pipe_crc[1] = igt_crtc_crc_new(crtc2,
 				       IGT_PIPE_CRC_SOURCE_AUTO);
 
 	igt_create_color_fb(data->drm_fd, mode[0]->hdisplay, mode[0]->vdisplay,
@@ -107,9 +107,9 @@ static void run_extendedmode_basic(data_t *data,
 	igt_create_color_fb(data->drm_fd, mode[1]->hdisplay, mode[1]->vdisplay,
 			    DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 0, 0, 1, &fbs[1]);
 
-	plane[0] = igt_crtc_get_plane_type(igt_crtc_for_pipe(display, pipe1),
+	plane[0] = igt_crtc_get_plane_type(crtc1,
 					   DRM_PLANE_TYPE_PRIMARY);
-	plane[1] = igt_crtc_get_plane_type(igt_crtc_for_pipe(display, pipe2),
+	plane[1] = igt_crtc_get_plane_type(crtc2,
 					   DRM_PLANE_TYPE_PRIMARY);
 
 	igt_plane_set_fb(plane[0], &fbs[0]);
@@ -163,10 +163,10 @@ static void run_extendedmode_basic(data_t *data,
 	igt_output_set_crtc(output1, NULL);
 	igt_output_set_crtc(output2, NULL);
 
-	igt_plane_set_fb(igt_crtc_get_plane_type(igt_crtc_for_pipe(display, pipe1),
+	igt_plane_set_fb(igt_crtc_get_plane_type(crtc1,
 						 DRM_PLANE_TYPE_PRIMARY),
 			 NULL);
-	igt_plane_set_fb(igt_crtc_get_plane_type(igt_crtc_for_pipe(display, pipe2),
+	igt_plane_set_fb(igt_crtc_get_plane_type(crtc2,
 						 DRM_PLANE_TYPE_PRIMARY),
 			 NULL);
 	igt_assert_f(igt_fit_modes_in_bw(display), "Unable to fit modes in bw\n");
@@ -177,59 +177,37 @@ static void run_extendedmode_basic(data_t *data,
 	igt_assert_crc_equal(&crc[1], &ref_crc[1]);
 }
 
-#define for_each_connected_output_local(display, output)		\
-	for (int j__ = 0;  assert(igt_can_fail()), j__ < (display)->n_outputs; j__++)	\
-		for_each_if ((((output) = &(display)->outputs[j__]), \
-			      igt_output_is_connected((output))))
-
-#define for_each_valid_output_on_pipe_local(display, pipe, output) \
-	for_each_connected_output_local((display), (output)) \
-		for_each_if (igt_pipe_connector_valid((pipe), (output)))
-
 static void run_extendedmode_test(data_t *data) {
-	igt_crtc_t *crtc2;
-	igt_crtc_t *crtc;
 	bool sim_flag = igt_run_in_simulation();
+	igt_crtc_t *crtc1, *crtc2;
 	igt_output_t *output1, *output2;
 	igt_display_t *display = &data->display;
 
 	igt_display_reset(display);
 
-	for_each_crtc(display, crtc) {
-		for_each_valid_output_on_pipe(display, crtc->pipe, output1) {
+	for_each_crtc_with_valid_output(display, crtc1, output1) {
+		for_each_crtc_with_valid_output(display, crtc2, output2) {
+			if (crtc1 == crtc2)
+				continue;
 
-			for_each_crtc(display, crtc2) {
-				if (crtc->pipe == crtc2->pipe)
-					continue;
+			if (output1 == output2)
+				continue;
 
-				for_each_valid_output_on_pipe_local(display,
-								    crtc2->pipe,
-								    output2) {
-					if (output1 == output2)
-						continue;
+			igt_display_reset(display);
 
-					igt_display_reset(display);
+			igt_output_set_crtc(output1, crtc1);
+			igt_output_set_crtc(output2, crtc2);
 
-					igt_output_set_crtc(output1,
-							    crtc);
-					igt_output_set_crtc(output2,
-							    crtc2);
+			if (!intel_pipe_output_combo_valid(display))
+				continue;
 
-					if (!intel_pipe_output_combo_valid(display))
-						continue;
+			igt_dynamic_f("pipe-%s-%s-pipe-%s-%s",
+				      igt_crtc_name(crtc1), igt_output_name(output1),
+				      igt_crtc_name(crtc2), igt_output_name(output2))
+				run_extendedmode_basic(data,
+						       crtc1, output1,
+						       crtc2, output2);
 
-					igt_dynamic_f("pipe-%s-%s-pipe-%s-%s",
-						      igt_crtc_name(crtc),
-						      igt_output_name(output1),
-						      igt_crtc_name(crtc2),
-						      igt_output_name(output2))
-						run_extendedmode_basic(data,
-								crtc->pipe,
-								output1,
-								crtc2->pipe,
-								output2);
-				}
-			}
 			/*
 			 * In simulation env, only run the test once with a
 			 * single valid pipe/output pair instead of all combos.

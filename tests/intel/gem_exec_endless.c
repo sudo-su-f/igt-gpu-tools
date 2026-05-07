@@ -316,28 +316,28 @@ static void endless_dispatch(int i915, const struct intel_execution_engine2 *e)
 		for_each_if(gem_class_can_store_dword(i915, (e)->class)) \
 			igt_dynamic_f("%s", (e)->name)
 
-static void pin_rps(int sysfs)
+static void pin_rps(int sysfs_gt)
 {
 	unsigned int max;
 
-	if (igt_sysfs_scanf(sysfs, "gt_RP0_freq_mhz", "%u", &max) != 1)
+	if (igt_sysfs_scanf(sysfs_gt, "rps_RP0_freq_mhz", "%u", &max) != 1)
 		return;
 
-	igt_sysfs_printf(sysfs, "gt_min_freq_mhz", "%u", max);
-	igt_sysfs_printf(sysfs, "gt_max_freq_mhz", "%u", max);
-	igt_sysfs_printf(sysfs, "gt_boost_freq_mhz", "%u", max);
+	igt_sysfs_printf(sysfs_gt, "rps_min_freq_mhz", "%u", max);
+	igt_sysfs_printf(sysfs_gt, "rps_max_freq_mhz", "%u", max);
+	igt_sysfs_printf(sysfs_gt, "rps_boost_freq_mhz", "%u", max);
 }
 
-static void unpin_rps(int sysfs)
+static void unpin_rps(int sysfs_gt)
 {
 	unsigned int v;
 
-	if (igt_sysfs_scanf(sysfs, "gt_RPn_freq_mhz", "%u", &v) == 1)
-		igt_sysfs_printf(sysfs, "gt_min_freq_mhz", "%u", v);
+	if (igt_sysfs_scanf(sysfs_gt, "rps_RPn_freq_mhz", "%u", &v) == 1)
+		igt_sysfs_printf(sysfs_gt, "rps_min_freq_mhz", "%u", v);
 
-	if (igt_sysfs_scanf(sysfs, "gt_RP0_freq_mhz", "%u", &v) == 1) {
-		igt_sysfs_printf(sysfs, "gt_max_freq_mhz", "%u", v);
-		igt_sysfs_printf(sysfs, "gt_boost_freq_mhz", "%u", v);
+	if (igt_sysfs_scanf(sysfs_gt, "rps_RP0_freq_mhz", "%u", &v) == 1) {
+		igt_sysfs_printf(sysfs_gt, "rps_max_freq_mhz", "%u", v);
+		igt_sysfs_printf(sysfs_gt, "rps_boost_freq_mhz", "%u", v);
 	}
 }
 
@@ -355,7 +355,7 @@ int igt_main()
 
 	igt_subtest_group() {
 		struct intel_mmio_data mmio;
-		int sysfs;
+		int sysfs_gt, gt;
 
 		igt_fixture() {
 			igt_require(gem_scheduler_enabled(i915));
@@ -365,16 +365,17 @@ int igt_main()
 						   igt_device_get_pci_device(i915),
 						   false);
 
-			sysfs = igt_sysfs_open(i915);
-			pin_rps(sysfs);
+			i915_for_each_gt(i915, sysfs_gt, gt)
+				pin_rps(sysfs_gt);
 		}
 
 		test_each_engine("dispatch", i915, e)
 				endless_dispatch(i915, e);
 
 		igt_fixture() {
-			unpin_rps(sysfs);
-			close(sysfs);
+			i915_for_each_gt(i915, sysfs_gt, gt)
+				unpin_rps(sysfs_gt);
+
 			intel_register_access_fini(&mmio);
 		}
 	}

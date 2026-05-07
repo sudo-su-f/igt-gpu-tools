@@ -29,7 +29,7 @@
 #include <sys/stat.h>
 
 IGT_TEST_DESCRIPTION("Check if ASSR is enabled on eDP links that support "
-		     "the display authentication by changing scrambling sequence. "
+		     "the display authentication by changing the scrambling sequence. "
 		     "The test also covers embedded and non-removable "
 		     "displays that appear as DP.");
 
@@ -161,7 +161,7 @@ static void present_visual_pattern(data_t *data, igt_output_t *output)
 {
 	igt_display_t *display = &data->display;
 	igt_plane_t *primary;
-	igt_crtc_t *crtc = igt_crtc_for_pipe(display, PIPE_A);
+	igt_crtc_t *crtc = igt_first_crtc(display);
 	drmModeModeInfo *mode;
 	igt_fb_t fb;
 
@@ -285,10 +285,10 @@ int igt_main()
 	igt_describe("Test ASSR on connected DP/eDP links");
 	igt_subtest("assr-links")
 		test_assr_links(&data, TEST_NONE);
-	igt_describe("Test ASSR with DPMS ");
+	igt_describe("Test ASSR with DPMS");
 	igt_subtest("assr-links-dpms")
 		test_assr_links(&data, TEST_DPMS);
-	igt_describe("Test ASSR with suspend ");
+	igt_describe("Test ASSR with suspend");
 	igt_subtest("assr-links-suspend")
 		test_assr_links(&data, TEST_SUSPEND);
 
