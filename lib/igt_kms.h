@@ -39,6 +39,10 @@
 
 #include "igt_fb.h"
 #include "ioctl_wrappers.h"
+#include "igt_joiner.h"
+#include "igt_dsc.h"
+#include "igt_mst.h"
+#include "igt_psr.h"
 
 /* Low-level helpers with kmstest_ prefix */
 
@@ -1313,5 +1317,87 @@ get_array_diff(const uint32_t *array_a, int array_a_len, const uint32_t *array_b
 int igt_get_crtc_index_from_connector_id(int drm_fd, int connector_id);
 igt_crtc_t *igt_get_crtc_for_output(igt_display_t *display,
 				    igt_output_t *output);
+
+bool igt_output_support(igt_output_t *output, enum feature feature, ...) {
+    va_list args;
+    va_start(args, feature);
+    bool result = false;
+
+    switch (feature) {
+        case FEATURE_BIGJOINER:
+            result = igt_check_bigjoiner_support(output->display);
+            break;
+        case FEATURE_DSC_SUPPORTED_BY_SOURCE:
+            result = igt_is_dsc_supported_by_source(output->display->drm_fd);
+            break;
+        case FEATURE_DSC_SUPPORTED_BY_SINK:
+            result = igt_is_dsc_supported_by_sink(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_FEC_SUPPORTED:
+            result = igt_is_fec_supported(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_DSC_ENABLED:
+            result = igt_is_dsc_enabled(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_FORCE_DSC_ENABLED:
+            result = igt_is_force_dsc_enabled(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_DSC_OUTPUT_FORMAT_SUPPORTED_BY_SINK:
+            result = igt_is_dsc_output_format_supported_by_sink(output->display->drm_fd, output->name, va_arg(args, enum dsc_output_format));
+            break;
+        case FEATURE_DSC_FRACTIONAL_BPP_SUPPORTED_BY_SINK:
+            result = igt_is_dsc_fractional_bpp_supported_by_sink(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_FORCE_DSC_FRACTIONAL_BPP_ENABLED:
+            result = igt_is_force_dsc_fractional_bpp_enabled(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_DSC_SINK_MAX_SLICE_COUNT:
+            result = igt_get_dsc_sink_max_slice_count(output->display->drm_fd, output->name);
+            break;
+        case FEATURE_PSR_SINK_SUPPORT:
+            result = psr_sink_support(output->display->drm_fd, output->display->drm_fd, PSR_MODE_1, output);
+            break;
+        case FEATURE_SELECTIVE_FETCH_CHECK:
+            result = selective_fetch_check(output->display->drm_fd, output);
+            break;
+        case FEATURE_EARLY_TRANSPORT_CHECK:
+            result = early_transport_check(output->display->drm_fd);
+            break;
+        case FEATURE_PSR_WAIT_ENTRY:
+            result = psr_wait_entry(output->display->drm_fd, PSR_MODE_1, output);
+            break;
+        case FEATURE_PSR_WAIT_UPDATE:
+            result = psr_wait_update(output->display->drm_fd, PSR_MODE_1, output);
+            break;
+        case FEATURE_PSR_LONG_WAIT_UPDATE:
+            result = psr_long_wait_update(output->display->drm_fd, PSR_MODE_1, output);
+            break;
+        case FEATURE_PSR_ENABLE:
+            result = psr_enable(output->display->drm_fd, output->display->drm_fd, PSR_MODE_1, output);
+            break;
+        case FEATURE_PSR_DISABLE:
+            result = psr_disable(output->display->drm_fd, output->display->drm_fd, output);
+            break;
+        case FEATURE_PSR_SINK_ERROR_CHECK:
+            psr_sink_error_check(output->display->drm_fd, PSR_MODE_1, output);
+            result = true;
+            break;
+        case FEATURE_PSR2_WAIT_SU:
+            result = psr2_wait_su(output->display->drm_fd, NULL);
+            break;
+        case FEATURE_PSR_PRINT_DEBUGFS:
+            psr_print_debugfs(output->display->drm_fd);
+            result = true;
+            break;
+        case FEATURE_PSR_GET_MODE:
+            result = psr_get_mode(output->display->drm_fd, output);
+            break;
+        default:
+            break;
+    }
+
+    va_end(args);
+    return result;
+}
 
 #endif /* __IGT_KMS_H__ */
